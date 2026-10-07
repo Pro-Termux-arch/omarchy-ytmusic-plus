@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "local.ytmusic-plus",
+  "name": "YTMusic Plus",
+  "version": "1.3-beta",
+  "author": "local",
+  "license": "MIT",
+  "description": "Privacy-first, login-free YouTube music player: search, mixes, playlists, saved tracks and offline downloads.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "YTMusic Plus",
+    "description": "Open the YouTube music player",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

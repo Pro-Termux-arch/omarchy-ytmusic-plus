@@ -1,0 +1,261 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import qs.Ui
+
+// Compact bar presence for YTMusic Plus. The full player lives in Player.qml;
+// this widget shows now-playing state and transport controls, all painted with
+// theme tokens (Color.accent / bar foreground) so theme switches repaint it.
+BarWidget {
+  id: root
+  moduleName: "local.ytmusic-plus"
+
+  property string title: ""
+  property string artist: ""
+  property string thumbnail: ""
+  property bool playing: false
+  property bool playerRunning: false
+  property bool popupOpen: false
+  property bool saved: false
+  property bool downloaded: false
+  property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
+  readonly property bool hasTrack: title !== ""
+  readonly property color foreground: root.bar ? root.bar.barForeground : Color.foreground
+  readonly property bool opened: popupOpen
+  property var vizLevels: []
+  property string vizPath: Qt.resolvedUrl("bin/ytviz").toString().replace("file://", "")
+
+  implicitWidth: hasTrack ? Style.space(218) : Style.space(30)
+  implicitHeight: barSize
+
+  function applyViz(line) {
+    var parts = String(line || "").trim().split(/\s+/)
+    if (parts.length < 10) return
+    var lv = []
+    for (var i = 0; i < 10; i++) {
+      var n = parseInt(parts[i], 10)
+      lv.push(isFinite(n) ? Math.max(0, Math.min(100, n)) : 0)
+    }
+    vizLevels = lv
+  }
+
+  function openPlayer() { root.toggle("{}") }
+
+  function open(payloadJson) {
+    popupOpen = true
+    Qt.callLater(function() {
+      if (popupPlayerLoader.item && popupPlayerLoader.item.open) popupPlayerLoader.item.open(payloadJson || "{}")
+    })
+  }
+
+  function close(reason) {
+    if (popupPlayerLoader.item && popupPlayerLoader.item.close) popupPlayerLoader.item.close()
+    popupOpen = false
+  }
+
+  function toggle(payloadJson) {
+    if (root.opened) root.close("toggle")
+    else root.open(payloadJson || "{}")
+  }
+
+  function runAction(action) {
+    if (actionProc.running) return
+    actionProc.command = ["bash", scriptPath, action]
+    actionProc.running = true
+  }
+
+  function refreshStatus() {
+    if (statusProc.running) return
+    statusProc.command = ["bash", scriptPath, "status"]
+    statusProc.running = true
+  }
+
+  function applyStatus(raw) {
+    try {
+      var status = JSON.parse(String(raw || "{}"))
+      root.playerRunning = status.running === true
+      root.playing = root.playerRunning && status.paused !== true
+      root.title = String(status.title || "")
+      root.artist = String(status.artist || "")
+      root.thumbnail = String(status.thumbnail || "")
+    } catch (error) {
+      console.warn("YTMusic Plus bar: invalid player status", error)
+    }
+  }
+
+  Rectangle {
+    anchors.centerIn: parent
+    width: parent.width
+    height: Math.max(Style.space(24), parent.height - Style.space(8))
+    radius: Style.space(6)
+    color: root.hasTrack ? Color.bar.background : "transparent"
+    border.width: root.hasTrack ? 1 : 0
+    border.color: Color.popups.border
+
+    // Body click: anywhere on the pill that isn't a button opens the player.
+    // Declared first (lowest) so every control above keeps its own clicks.
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.openPlayer()
+    }
+
+    Item {
+      anchors.fill: parent
+      visible: !root.hasTrack
+
+      Text {
+        anchors.centerIn: parent
+        text: "󰒣"
+        color: root.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
+        font.pixelSize: Style.font.iconLarge
+      }
+    }
+
+    Row {
+      anchors.fill: parent
+      anchors.margins: Style.space(2)
+      spacing: Style.space(3)
+      visible: root.hasTrack
+
+      Rectangle {
+        width: parent.height
+        height: parent.height
+        radius: Style.space(4)
+        color: Color.bar.background
+        clip: true
+        Image { anchors.fill: parent; source: root.thumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true }
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.openPlayer()
+        }
+      }
+
+      Marquee {
+        width: Style.space(44)
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.title
+        textColor: root.foreground
+        textFont: root.bar ? root.bar.fontFamily : Style.font.menuFamily
+        pixelSize: Style.font.caption
+        bold: true
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.openPlayer()
+        }
+      }
+
+      VizBars {
+        width: Style.space(52)
+        anchors.verticalCenter: parent.verticalCenter
+        levels: root.vizLevels
+        barColor: Color.accent
+      }
+
+      Item {
+        width: Style.space(20)
+        height: parent.height
+        Text { anchors.centerIn: parent; text: "󰒮"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("previous") }
+      }
+
+      Rectangle {
+        width: Style.space(22)
+        height: width
+        radius: width / 2
+        color: "transparent"
+        anchors.verticalCenter: parent.verticalCenter
+        Text { anchors.centerIn: parent; text: root.playing ? "󰏤" : "󰐊"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            if (root.playerRunning) root.runAction("toggle")
+            else root.openPlayer()
+          }
+        }
+      }
+
+      Item {
+        width: Style.space(20)
+        height: parent.height
+        Text { anchors.centerIn: parent; text: "󰒭"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
+      }
+    }
+  }
+
+  KeyboardPanel {
+    id: playerPopup
+    anchorItem: root
+    bar: root.bar
+    owner: root
+    open: root.popupOpen
+    contentWidth: playerPopup.fittedContentWidth(Style.space(410))
+    contentHeight: playerPopup.cappedContentHeight(Style.space(560))
+    padding: 0
+    margin: Style.gapsOut
+    focusTarget: popupPlayerLoader.item ? popupPlayerLoader.item.searchInput : null
+
+    Loader {
+      id: popupPlayerLoader
+      anchors.fill: parent
+      active: true
+      source: Qt.resolvedUrl("Player.qml")
+      onLoaded: {
+        item.closeCallback = function() { root.close("closeCallback") }
+      }
+    }
+  }
+
+  Process {
+    id: actionProc
+    onExited: root.refreshStatus()
+  }
+
+  // Live spectrum from the output monitor (ytviz). Streams text lines; dies
+  // quietly without a monitor, and the bars idle-pulse instead.
+  Process {
+    id: vizProc
+    stdout: SplitParser { onRead: function(line) { root.applyViz(line) } }
+    onExited: root.vizLevels = []
+  }
+
+  Timer {
+    interval: 1500
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: {
+      root.refreshStatus()
+      var want = root.hasTrack && root.playing
+      if (want && !vizProc.running) {
+        vizProc.command = [vizPath]
+        vizProc.running = true
+      } else if (!want && vizProc.running) {
+        vizProc.running = false
+        root.vizLevels = []
+      }
+    }
+  }
+
+  Process {
+    id: statusProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyStatus(text)
+    }
+  }
+
+  IpcHandler {
+    target: root.moduleName
+
+    function open(): void { root.open("{}") }
+    function close(): void { root.close("ipc") }
+    function toggle(): void { root.toggle("{}") }
+  }
+}

@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+# ytviz — real spectrum bars from whatever is playing, stdlib only.
+#
+# Records the default sink's monitor via pw-record and runs a Goertzel filter
+# bank (10 log-spaced bands) over each chunk. Prints one line of 10 integers
+# (0-100) per ~46ms frame. Adaptive per-band peaks keep quiet passages alive.
+# Exits non-zero when no monitor exists so callers can fall back to a pulse.
+import math
+import struct
+import subprocess
+import sys
+
+RATE = 22050
+CHUNK = 1024
+BANDS = [60, 120, 250, 500, 1000, 2000, 4000, 6000, 9000, 12000]
+NBANDS = len(BANDS)
+# Precomputed Goertzel coefficients per band.
+_COEFFS = [2.0 * math.cos(2.0 * math.pi * f / RATE) for f in BANDS]
+
+
+def default_monitor():
+    try:
+        sink = subprocess.check_output(
+            ["pactl", "get-default-sink"], text=True, timeout=5
+        ).strip()
+    except Exception:
+        return None
+    if not sink:
+        return None
+    return sink + ".monitor"
+
+
+def goertzel(samples, coeff):
+    s0 = s1 = s2 = 0.0
+    for x in samples:
+        s0 = x + coeff * s1 - s2
+        s2 = s1
+        s1 = s0
+    return s1 * s1 + s2 * s2 - coeff * s1 * s2
+
+
+def main():
+    monitor = default_monitor()
+    if not monitor:
+        sys.stderr.write("ytviz: no default sink\n")
+        return 1
+    try:
+        rec = subprocess.Popen(
+            ["pw-record", "--target", monitor, "--format", "s16",
+             "--rate", str(RATE), "--channels", "1", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        sys.stderr.write("ytviz: pw-record failed: %s\n" % e)
+        return 1
+    frame_bytes = CHUNK * 2
+    peaks = [1e-9] * NBANDS
+    disp = [0.0] * NBANDS
+    try:
+        while True:
+            raw = rec.stdout.read(frame_bytes)
+            if not raw or len(raw) < frame_bytes:
+                break
+            samples = struct.unpack("<%dh" % CHUNK, raw)
+            out = []
+            for b in range(NBANDS):
+                mag = goertzel(samples, _COEFFS[b]) / (CHUNK * CHUNK)
+                if mag > peaks[b]:
+                    peaks[b] = mag
+                else:
+                    peaks[b] *= 0.9995
+                # -60dB floor -> 0, peak -> 100
+                db = 10.0 * math.log10(mag / (peaks[b] + 1e-12) + 1e-9)
+                v = max(0.0, min(100.0, (db + 60.0) * 100.0 / 60.0))
+                # fast attack, slow release
+                disp[b] = v if v > disp[b] else disp[b] * 0.82
+                out.append(str(int(disp[b])))
+            sys.stdout.write(" ".join(out) + "\n")
+            sys.stdout.flush()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
+    finally:
+        try:
+            rec.kill()
+        except Exception:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
