@@ -24,7 +24,7 @@ Item {
   readonly property color raised: Style.normalFill
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.3 beta"
+  readonly property string appVersion: "v1.3 stable"
 
   property bool opened: false
   property bool searching: false
