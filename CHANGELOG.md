@@ -1,11 +1,24 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **6** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable)
+Updates so far: **6** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.7.1)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.7 stable (current)
+## v1.7.1 (current)
+
+- Qt 6.12 compatibility fix: every themed binding now reads the palette from
+  the shell's `qs.Commons.ShellColor` singleton instead of `Color`. Qt 6.12
+  ships a built-in `Color` type (`QtQuick/Color`) that shadows the old
+  singleton name, so `Color.accent`, `Color.popups.*`, `Color.bar.*` and
+  `Color.tooltip.*` all resolved to undefined and the bar pill, tooltip,
+  visualizer bars and every player surface lost their theme colors.
+  The palette, alpha handling and theme-switch reactivity are unchanged —
+  only the name it is read through. Requires an Omarchy shell that ships
+  `ShellColor` (Qt 6.12-era builds); older shells that only expose `Color`
+  can use v1.7
+
+## v1.7 stable
 
 - Track-row hover buttons no longer vanish under the cursor: new `rowHovered`
   state covers the row plus all four action buttons (Qt gives hover only to

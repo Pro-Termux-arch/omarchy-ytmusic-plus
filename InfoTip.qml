@@ -12,9 +12,9 @@ Rectangle {
   width: tipLabel.width + Style.space(14)
   height: Style.space(22)
   radius: Style.space(6)
-  color: Color.tooltip.background
+  color: ShellColor.tooltip.background
   border.width: 1
-  border.color: Color.tooltip.border
+  border.color: ShellColor.tooltip.border
   visible: false
   z: 100
 
@@ -30,7 +30,7 @@ Rectangle {
     maximumLineCount: 1
     elide: Text.ElideRight
     width: Math.min(implicitWidth, Style.space(220))
-    color: Color.tooltip.text
+    color: ShellColor.tooltip.text
     font.family: Style.font.menuFamily
     font.pixelSize: Style.font.caption
   }

@@ -5,7 +5,7 @@ import qs.Commons
 // track row so you can see what's on air while scrolling the queue.
 Item {
   id: wb
-  property color barColor: Color.accent
+  property color barColor: ShellColor.accent
   property int bars: 4
   property bool active: true
 

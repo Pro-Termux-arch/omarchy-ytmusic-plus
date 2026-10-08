@@ -24,7 +24,7 @@ Privacy-first, login-free YouTube music player for the Omarchy bar.
   unplayable tracks auto-skip (capped, so a bad queue stops instead of racing)
 - **Efficient**: single `mpv` instance over IPC, `flock`-serialized state,
   10-min search cache + 3-h stream-URL cache, debounced search input
-- **Themed**: every surface uses `Color.*` / `Style.*` tokens — theme switches
+- **Themed**: every surface uses `ShellColor.*` / `Style.*` tokens — theme switches
   repaint the player, nothing is hardcoded
 
 ## Dependencies
