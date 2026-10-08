@@ -16,12 +16,14 @@ Item {
   Text {
     id: mqText
     text: mq.text
+    textFormat: Text.PlainText
+    maximumLineCount: 1
     color: mq.textColor
     font.family: mq.textFont
     font.pixelSize: mq.pixelSize
     font.bold: mq.bold
     elide: Text.ElideRight
-    width: Math.max(mq.width, implicitWidth)
+    width: Math.min(Math.max(mq.width, implicitWidth), mq.width + 6000)
 
     SequentialAnimation on x {
       running: mq.overflowing && mq.visible
@@ -29,13 +31,13 @@ Item {
       PauseAnimation { duration: 1600 }
       NumberAnimation {
         to: mq.width - mqText.width
-        duration: Math.max(1400, (mqText.width - mq.width) * 30)
+        duration: Math.min(12000, Math.max(1400, (mqText.width - mq.width) * 30))
         easing.type: Easing.InOutSine
       }
       PauseAnimation { duration: 1600 }
       NumberAnimation {
         to: 0
-        duration: Math.max(1400, (mqText.width - mq.width) * 30)
+        duration: Math.min(12000, Math.max(1400, (mqText.width - mq.width) * 30))
         easing.type: Easing.InOutSine
       }
     }

@@ -1,11 +1,33 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **4** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta)
+Updates so far: **5** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.5 beta (current)
+## v1.6 stable (current)
+
+> Promoted from v1.5 beta: per project rule, going stable always bumps the
+> version. This is a security-hardening release — full word-by-word audit of
+> backend + every QML file, no features, no sync-engine changes.
+
+- Backend: bounded unplayable-track skip (no more unbounded yt-dlp recursion
+  on dead queues), fail-closed state writes (corrupt input can no longer print
+  false `saved` success), `cache-clear` dir guard, runtime dir `700`,
+  validated `pl-remove` ids, duplicate cache-prune removed, lyric title trim
+  without `xargs` mangling
+- ytviz: monitor-id validation (numeric ids + `*.monitor` shape only), bounded
+  5s reads (silent sinks can't hang the bar widget), zombie reaping, hostile
+  pactl output rejected with fallback
+- Player: IPC command gated on strict videoId (kills the one `bash -c`
+  interpolation), thumbnail/stream URL allowlists (https only), plain-text
+  rendering of all remote strings (no HTML/beacon injection), `[offset:]`
+  clamped ±10s, NaN guards on seek paths, control/bidi character stripping
+- Widgets: viz line-length cap, action whitelist, fail-safe status parse
+  (stale `playing` impossible), marquee width/duration caps + plain text,
+  VizBars NaN-height fix, tooltips width-capped + plain text
+
+## v1.5 beta
 
 - Phantom playing state fixed: stale mpv socket no longer sticks the transport
   on the pause glyph — `status` cleans the dead socket and reports

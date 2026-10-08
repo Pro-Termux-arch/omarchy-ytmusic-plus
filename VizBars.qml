@@ -13,6 +13,12 @@ Item {
   implicitWidth: bars * 5
   implicitHeight: 18
 
+  function levelAt(i) {
+    var v = Number(viz.levels[i])
+    if (!isFinite(v)) return 0
+    return Math.max(0, Math.min(100, v))
+  }
+
   readonly property bool live: viz.levels && viz.levels.length >= viz.bars
 
   Row {
@@ -23,7 +29,7 @@ Item {
       Rectangle {
         width: 3
         height: viz.live
-          ? Math.max(2, Math.min(18, Math.round((viz.levels[index] || 0) / 100 * 18)))
+          ? Math.max(2, Math.min(18, Math.round(viz.levelAt(index) / 100 * 18)))
           : 2
         radius: 1.5
         color: viz.live ? viz.barColor : viz.dimColor

@@ -40,6 +40,10 @@ STREAM_CACHE_TTL=10800  # 3 h — YouTube expiring URLs typically live ~6h; refr
 CONNECT_TIMEOUT=8
 
 mkdir -p "$RUNTIME_DIR" "$DATA_DIR" "$PL_DIR" "$CACHE_DIR" "$MUSIC_DIR"
+# Runtime holds the mpv socket + playback state: keep it private even when
+# XDG_RUNTIME_DIR is unset and we fall back to /tmp (sticky-bit dir shared
+# with other users). Data/cache dirs intentionally keep default perms.
+chmod 700 -- "$RUNTIME_DIR" 2>/dev/null || true
 [[ -e "$QUEUE_FILE" ]] || printf '[]\n' >"$QUEUE_FILE"
 [[ -e "$LIB_FILE" ]] || printf '[]\n' >"$LIB_FILE"
 [[ -e "$DL_META" ]] || printf '{}' >"$DL_META"
@@ -332,7 +336,10 @@ launch_stream() {
 }
 
 start_index() {
-  local index="$1" count track vid url state_tmp target
+  # _tries bounds the unplayable-track skip chain: without it, a fully
+  # unresolvable queue (offline/throttled) recursed forever, wrapping the
+  # queue indefinitely and spawning unbounded yt-dlp runs.
+  local index="$1" count track vid url state_tmp target _tries="${2:-0}"
   count="$(jq 'length' "$QUEUE_FILE")"
   (( count > 0 )) || exit 0
   index=$(( (index % count + count) % count ))
@@ -353,9 +360,9 @@ start_index() {
   # Pre-resolve BEFORE publishing state: if every source is down (offline,
   # throttled) we try the next track instead of going silent on a dead one.
   if ! target="$(resolve_playable "$vid")"; then
-    if (( count > 1 )); then
+    if (( count > 1 )) && (( _tries + 1 < count )); then
       rm -f -- "$FAIL_FILE"
-      start_index "$((index + 1))"
+      start_index "$((index + 1))" "$((_tries + 1))"
       return $?
     fi
     exit 1
@@ -526,7 +533,6 @@ case "${1:-}" in
     query="${2:-}"
     [[ -n "$query" ]] || exit 0
     prune_cache
-    prune_cache
     limit="$(sget searchLimit)"; [[ "$limit" =~ ^(8|12|20)$ ]] || limit=12
     cached_or_search "$query" "$limit" || { printf 'All search sources failed (yt-dlp + Invidious + Piped)\n' >&2; exit 1; }
     ;;
@@ -570,7 +576,6 @@ case "${1:-}" in
     fi
     [[ "$url" == *"list="* ]] || { printf 'Not a playlist URL (missing list=)\n' >&2; exit 2; }
     # Only https: URLs reach yt-dlp (no bare flags, no exotic schemes).
-    prune_cache
     [[ "$url" == https://* ]] || { printf 'Playlist URL must start with https://\n' >&2; exit 2; }
     prune_cache
     ytdlp_playlist "$url" "$limit" || { printf 'Playlist import failed (private/deleted/blocked?)\n' >&2; exit 1; }
@@ -771,14 +776,16 @@ case "${1:-}" in
     tmp="$DATA_DIR/library.json.tmp"
     jq -c --arg v "$vid" --arg t "$title" --arg a "$artist" --arg th "$thumb" --arg d "$dur" --argjson l "$live" --arg u "$url" \
       'map(select(.videoId != $v)) + [{videoId:$v,title:$t,artist:$a,thumbnail:$th,duration:$d,isLive:$l,url:$u}]' \
-      "$LIB_FILE" >"$tmp" && commit "$tmp" "$LIB_FILE"
+      "$LIB_FILE" >"$tmp" || exit 1
+    commit "$tmp" "$LIB_FILE" || exit 1
     printf 'saved %s\n' "$vid"
     ;;
   lib-unsave)
     require jq
     vid="${2:-}"; valid_id "$vid" || exit 2
     tmp="$DATA_DIR/library.json.tmp"
-    jq -c --arg v "$vid" 'map(select(.videoId != $v))' "$LIB_FILE" >"$tmp" && commit "$tmp" "$LIB_FILE"
+    jq -c --arg v "$vid" 'map(select(.videoId != $v))' "$LIB_FILE" >"$tmp" || exit 1
+    commit "$tmp" "$LIB_FILE" || exit 1
     printf 'removed %s\n' "$vid"
     ;;
   lib-list)
@@ -829,16 +836,19 @@ case "${1:-}" in
     tmp="$PL_DIR/$name.json.tmp"
     jq -c --arg v "$vid" --arg t "$title" --arg a "$artist" --arg th "$thumb" --arg d "$dur" --argjson l "$live" --arg u "$url" \
       'if (map(.videoId) | index($v) != null) then . else . + [{videoId:$v,title:$t,artist:$a,thumbnail:$th,duration:$d,isLive:$l,url:$u}] end' \
-      "$PL_DIR/$name.json" >"$tmp" && commit "$tmp" "$PL_DIR/$name.json"
+      "$PL_DIR/$name.json" >"$tmp" || exit 1
+    commit "$tmp" "$PL_DIR/$name.json" || exit 1
     printf 'added %s to %s\n' "$vid" "$name"
     ;;
   pl-remove)
     require jq
     name="${2:-}"; vid="${3:-}"
     pl_name_ok "$name" || exit 2
+    valid_id "$vid" || exit 2
     [[ -f "$PL_DIR/$name.json" ]] || exit 1
     tmp="$PL_DIR/$name.json.tmp"
-    jq -c --arg v "$vid" 'map(select(.videoId != $v))' "$PL_DIR/$name.json" >"$tmp" && commit "$tmp" "$PL_DIR/$name.json"
+    jq -c --arg v "$vid" 'map(select(.videoId != $v))' "$PL_DIR/$name.json" >"$tmp" || exit 1
+    commit "$tmp" "$PL_DIR/$name.json" || exit 1
     ;;
   pl-delete)
     name="${2:-}"; pl_name_ok "$name" || exit 2
@@ -852,7 +862,8 @@ case "${1:-}" in
     len="$(jq 'length' "$PL_DIR/$name.json")"
     (( len > 0 )) || { printf 'playlist is empty\n' >&2; exit 1; }
     queue_tmp="$RUNTIME_DIR/queue.json.tmp"
-    cp -- "$PL_DIR/$name.json" "$queue_tmp" && mv -- "$queue_tmp" "$QUEUE_FILE"
+    cp -- "$PL_DIR/$name.json" "$queue_tmp" || exit 1
+    mv -- "$queue_tmp" "$QUEUE_FILE" || exit 1
     start_index 0
     ;;
   # ---- downloads: offline opus cache ---------------------------------------
@@ -894,7 +905,8 @@ case "${1:-}" in
       --arg t "${3:-Untitled}" --arg a "${4:-YouTube}" --arg th "${5:-}" --arg d "${6:-}" \
       --argjson l "$([[ "${7:-false}" == true ]] && printf true || printf false)" \
       '. + {($v): {path:$p, title:$t, artist:$a, thumbnail:$th, duration:$d, isLive:$l, at:(now|floor)}}' \
-      "$DL_META" >"$tmp" && commit "$tmp" "$DL_META"
+      "$DL_META" >"$tmp" || exit 1
+    commit "$tmp" "$DL_META" || exit 1
     # resolved streams for this id are now redundant — drop the cache entry
     rm -f -- "$CACHE_DIR/stream-$(sha1 "$vid")"
     printf 'downloaded %s\n' "$vid"
@@ -912,7 +924,8 @@ case "${1:-}" in
     vid="${2:-}"; valid_id "$vid" || exit 2
     rm -f -- "$(dl_path_for "$vid")"
     tmp="$DL_META.tmp"
-    jq -c --arg v "$vid" 'del(.[$v])' "$DL_META" >"$tmp" && commit "$tmp" "$DL_META"
+    jq -c --arg v "$vid" 'del(.[$v])' "$DL_META" >"$tmp" || exit 1
+    commit "$tmp" "$DL_META" || exit 1
     printf 'removed download %s\n' "$vid"
     ;;
   font-install)
@@ -1071,17 +1084,22 @@ case "${1:-}" in
     [[ "$cur" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || cur=0
     new="$(awk -v c="$cur" -v d="$delta" 'BEGIN{v=c+d; if(v>10)v=10; if(v<-10)v=-10; printf "%.2f", v}')"
     tmp="$DATA_DIR/lyric_offsets.json.tmp"
-    jq -c --arg v "$vid" --argjson n "$new" '. + {($v): $n}' "$OFFSETS_FILE" >"$tmp" && commit "$tmp" "$OFFSETS_FILE"
+    jq -c --arg v "$vid" --argjson n "$new" '. + {($v): $n}' "$OFFSETS_FILE" >"$tmp" || exit 1
+    commit "$tmp" "$OFFSETS_FILE" || exit 1
     printf '%s\n' "$new"
     ;;
   offset-reset)
     require jq
     vid="${2:-}"; valid_id "$vid" || exit 2
     tmp="$DATA_DIR/lyric_offsets.json.tmp"
-    jq -c --arg v "$vid" 'del(.[$v])' "$OFFSETS_FILE" >"$tmp" && commit "$tmp" "$OFFSETS_FILE"
+    jq -c --arg v "$vid" 'del(.[$v])' "$OFFSETS_FILE" >"$tmp" || exit 1
+    commit "$tmp" "$OFFSETS_FILE" || exit 1
     sget lyricsOffset
     ;;
   cache-clear)
+    # Guard the rm -rf: CACHE_DIR derives from $XDG_CACHE_HOME, so refuse
+    # anything that is not our own suffixed dir (never / or $HOME itself).
+    [[ "$CACHE_DIR" == */omarchy-ytmusic-plus && "$CACHE_DIR" != "/" ]] || { printf 'refusing to clear unexpected cache dir\n' >&2; exit 2; }
     rm -rf -- "$CACHE_DIR" && mkdir -p "$CACHE_DIR"
     printf 'cache cleared\n'
     ;;
@@ -1213,8 +1231,9 @@ case "${1:-}" in
     fi
     if [[ -z "$out" ]]; then
       # "Title (Official Video)" style suffixes poison exact matching —
-      # retry with the bare song name.
-      bare="$(sed -e 's/ *(.*//' -e 's/ *\[.*//' -e 's/ *- *Official.*//I' <<<"$title" | xargs || true)"
+      # retry with the bare song name. No xargs here: xargs parses quotes/
+      # backslashes, mangling titles like `Say "Hi"`. sed trims safely.
+      bare="$(sed -e 's/ *(.*//' -e 's/ *\[.*//' -e 's/ *- *Official.*//I' -e 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$title")"
       if [[ -n "$bare" && "$bare" != "$title" ]]; then
         if [[ -n "${dur_secs:-}" ]]; then
           out="$(pick_one <<<"$(fetch_get "$artist" "$bare" "$dur_secs")")"

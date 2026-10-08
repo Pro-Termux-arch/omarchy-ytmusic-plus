@@ -6,6 +6,8 @@
 # (0-100) per ~46ms frame. Adaptive per-band peaks keep quiet passages alive.
 # Exits non-zero when no monitor exists so callers can fall back to a pulse.
 import math
+import re
+import select
 import struct
 import subprocess
 import sys
@@ -14,6 +16,13 @@ RATE = 22050
 CHUNK = 1024
 BANDS = [60, 120, 250, 500, 1000, 2000, 4000, 6000, 9000, 12000]
 NBANDS = len(BANDS)
+# Pactl identifiers are dot-separated node names; reject anything else so a
+# malformed/spoofed pactl line can never become a --target value.
+_SINK_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_MONITOR_RE = re.compile(r"^[A-Za-z0-9_.:-]+\.monitor$")
+# Silence timeout (s) for one audio chunk: a suspended/hung source must not
+# hang us forever in a blocking pipe read.
+READ_TIMEOUT = 5.0
 # Precomputed Goertzel coefficients per band.
 _COEFFS = [2.0 * math.cos(2.0 * math.pi * f / RATE) for f in BANDS]
 
@@ -32,6 +41,8 @@ def default_monitor():
         ).strip() or None
     except Exception:
         default_sink = None
+    if default_sink and not _SINK_RE.match(default_sink):
+        default_sink = None
     monitors = []  # list of (id, name)
     listed = False
     try:
@@ -43,7 +54,9 @@ def default_monitor():
             parts = line.split()
             if len(parts) >= 2:
                 sid, name = parts[0], parts[1]
-                if name.endswith(".monitor"):
+                # Numeric id + well-shaped monitor name only; skip malformed
+                # lines (empty fields, headers, wrapped rows) outright.
+                if sid.isdigit() and _MONITOR_RE.match(name):
                     monitors.append((sid, name))
     except Exception:
         listed = False
@@ -95,6 +108,17 @@ def main():
     lines = 0
     try:
         while True:
+            # Bounded wait: select returns readable on EOF too, so a dead
+            # pw-record still falls through to read -> break. A live but
+            # silent source trips the timeout instead of hanging forever.
+            try:
+                ready, _, _ = select.select([rec.stdout], [], [], READ_TIMEOUT)
+            except Exception:
+                break
+            if not ready:
+                sys.stderr.write(
+                    "ytviz: timed out waiting for audio data from target %s\n" % monitor)
+                break
             raw = rec.stdout.read(frame_bytes)
             if not raw or len(raw) < frame_bytes:
                 break
@@ -120,6 +144,10 @@ def main():
     finally:
         try:
             rec.kill()
+        except Exception:
+            pass
+        try:
+            rec.wait(timeout=2)
         except Exception:
             pass
     if lines == 0:

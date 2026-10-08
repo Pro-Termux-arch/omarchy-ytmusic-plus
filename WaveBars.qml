@@ -16,7 +16,7 @@ Item {
     anchors.centerIn: parent
     spacing: 2
     Repeater {
-      model: wb.bars
+      model: Math.max(0, Math.min(12, wb.bars))
       Rectangle {
         width: 3
         height: 12

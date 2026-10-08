@@ -24,7 +24,7 @@ Item {
   readonly property color raised: Style.normalFill
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.5 beta"
+  readonly property string appVersion: "v1.6 stable"
 
   property bool opened: false
   property bool searching: false
@@ -143,11 +143,40 @@ Item {
     return value || "--:--"
   }
 
+  // Remote art may only be remote: reject file://, data:, absolute/relative
+  // local paths so a crafted thumbnail can never probe the local filesystem.
+  function isSafeImageUrl(u) {
+    var s = String(u || "").trim()
+    if (!s || s === "NA") return false
+    if (s[0] === "/" || s[0] === "." || s[0] === "~") return false
+    if (/^(file|data|blob|ftp|jar|filesystem):/i.test(s)) return false
+    return /^https?:/i.test(s)
+  }
+
+  // Strip C0/C1 controls and bidi overrides (U+202D-U+202E, U+2066-U+2069)
+  // from remote titles/artists so a malicious name cannot spoof UI order.
+  // Points: [0-8] [11-12] [14-31] [127-159] [8237-8238] [8294-8297].
+  function sanitizeText(s) {
+    var ranges = [[0, 8], [11, 12], [14, 31], [127, 159], [8237, 8238], [8294, 8297]]
+    var out = String(s || "")
+    for (var r = 0; r < ranges.length; r++) {
+      for (var c = ranges[r][0]; c <= ranges[r][1]; c++) out = out.split(String.fromCharCode(c)).join("")
+    }
+    return out
+  }
+
   function thumbFor(videoId, raw, streamUrl) {
     var t = String(raw || "").trim()
-    if (t && t !== "NA") return t
+    if (t && t !== "NA") {
+      if (isSafeImageUrl(t)) return t
+      if (streamUrl) return ""
+      // Unsafe art on a YouTube row: fall back to stock ytimg art.
+      if (!isVideoId(videoId)) return ""
+      return "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg"
+    }
     // Streams (radio/previews) have no ytimg art — blank tile, no broken URL.
     if (streamUrl) return ""
+    if (!isVideoId(videoId)) return ""
     return "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg"
   }
 
@@ -183,12 +212,16 @@ Item {
       homeModel.clear()
       for (var i = 0; i < arr.length; i++) {
         var r = arr[i] || {}
+        var homeUrl = String(r.url || "")
+        if (homeUrl && !/^https?:/i.test(homeUrl.trim())) homeUrl = ""
+        var homeKind = String(r.kind || "chart")
+        if (homeKind !== "radio" && homeKind !== "preview" && homeKind !== "chart") homeKind = "chart"
         homeModel.append({
-          title: String(r.title || "Untitled"),
-          artist: String(r.artist || ""),
-          art: String(r.art || ""),
-          url: String(r.url || ""),
-          kind: String(r.kind || "chart")
+          title: sanitizeText(r.title) || "Untitled",
+          artist: sanitizeText(r.artist),
+          art: isSafeImageUrl(r.art) ? String(r.art) : "",
+          url: homeUrl,
+          kind: homeKind
         })
       }
       if (homeModel.count === 0) errorMessage = "Nothing here yet"
@@ -224,7 +257,7 @@ Item {
   }
 
   function playDirect(url, title, artist, art, kind) {
-    if (!url) return
+    if (!/^https?:/i.test(String(url || "").trim())) return
     tracks.clear()
     tracks.append({
       videoId: fakeId(kind === "radio" ? "RDO" : "PVW", url),
@@ -336,6 +369,8 @@ Item {
   }
 
   function checkCurrentFlags() {
+    // Shell-string below: only a strict videoId may enter (no metachars).
+    if (!isVideoId(currentVideoId)) return
     if (flagProc.running) return
     flagProc.collected = ""
     flagProc.command = ["bash", "-c",
@@ -420,7 +455,7 @@ Item {
       var line = lines[i]
       if (!line || !line.trim()) continue
       var off = line.match(/^\[offset:\s*([+-]?\d+)\s*\]/i)
-      if (off) { fileOffset = (parseInt(off[1], 10) || 0) / 1000; continue }
+      if (off) { fileOffset = Math.max(-10, Math.min(10, (parseInt(off[1], 10) || 0) / 1000)); continue }
       var tag = line.match(/^\[(ar|ti|al|length|by|offset|au):/i)
       if (tag) continue
       var m = line.match(re)
@@ -466,6 +501,7 @@ Item {
   function seekToLyric(i) {
     if (!lyricsSynced || i < 0 || i >= lyrics.count) return
     var t = Math.max(0, lyrics.get(i).time - trackLyricOffset)
+    if (!isFinite(t)) return
     quickProc.command = ["bash", scriptPath, "seek-to", t.toFixed(2)]
     quickProc.running = true
     smoothPos = t
@@ -474,7 +510,7 @@ Item {
 
   // Timeline scrub: ratio 0..1 of the known duration.
   function seekRatio(r) {
-    if (!(r >= 0) || playbackDuration <= 0) return
+    if (!(r >= 0) || !isFinite(r) || playbackDuration <= 0) return
     r = Math.max(0, Math.min(1, r))
     var t = r * playbackDuration
     quickProc.command = ["bash", scriptPath, "seek-to", t.toFixed(1)]
@@ -494,14 +530,16 @@ Item {
       var videoId = fields[0]
       if (!isVideoId(videoId)) continue
       var duration = fields[3] || ""
+      var rowUrl = (fields[6] || "").trim()
+      if (rowUrl && !/^https?:/i.test(rowUrl)) rowUrl = ""
       out.push({
         videoId: videoId,
-        title: fields[1] || "Untitled",
-        artist: fields[2] || "YouTube",
+        title: sanitizeText(fields[1]) || "Untitled",
+        artist: sanitizeText(fields[2]) || "YouTube",
         duration: duration,
         isLive: fields[5] === "is_live" || duration.toUpperCase() === "NA",
-        thumbnail: thumbFor(videoId, fields[4], (fields[6] || "").trim()),
-        url: (fields[6] || "").trim()
+        thumbnail: thumbFor(videoId, fields[4], rowUrl),
+        url: rowUrl
       })
       if (out.length >= limit) break
     }
@@ -861,13 +899,14 @@ Item {
       sleepUntil = Number(status.sleepUntil) || 0
       sleepMode = String(status.sleepMode || "")
       if (tabIndex === 6) updateLyricIndex()
-      if (status.title) currentTitle = String(status.title)
-      if (status.artist) currentArtist = String(status.artist)
-      if (status.thumbnail) currentThumbnail = String(status.thumbnail)
-      if (status.duration) currentDuration = String(status.duration)
-      if (status.videoId) {
-        if (currentVideoId !== String(status.videoId)) {
-          currentVideoId = String(status.videoId)
+      if (status.title) currentTitle = sanitizeText(status.title)
+      if (status.artist) currentArtist = sanitizeText(status.artist)
+      if (status.thumbnail && isSafeImageUrl(status.thumbnail)) currentThumbnail = String(status.thumbnail)
+      if (status.duration) currentDuration = sanitizeText(status.duration)
+      var incomingId = String(status.videoId || "")
+      if (isVideoId(incomingId)) {
+        if (currentVideoId !== incomingId) {
+          currentVideoId = incomingId
           // Backend-side track change (auto-advance): same fresh-clock reset
           // as playAt, otherwise the ticker runs away on stale time.
           smoothPos = 0
@@ -885,14 +924,16 @@ Item {
           var videoId = String(row.videoId || "")
           if (!root.isVideoId(videoId)) continue
           var duration = String(row.duration || "")
+          var qUrl = String(row.url || "")
+          if (qUrl && !/^https?:/i.test(qUrl.trim())) qUrl = ""
           tracks.append({
             videoId: videoId,
-            title: String(row.title || "Untitled"),
-            artist: String(row.artist || "YouTube"),
+            title: sanitizeText(row.title) || "Untitled",
+            artist: sanitizeText(row.artist) || "YouTube",
             duration: duration,
             isLive: row.isLive === true || duration.toUpperCase() === "NA",
-            thumbnail: thumbFor(videoId, row.thumbnail, row.url),
-            url: String(row.url || "")
+            thumbnail: thumbFor(videoId, row.thumbnail, qUrl),
+            url: qUrl
           })
         }
       }
@@ -1100,8 +1141,9 @@ Item {
       for (var i = 0; i < lines.length; i++) {
         if (!lines[i]) continue
         var parts = lines[i].split("\t")
-        if (!parts[0]) continue
-        playlists.append({ name: parts[0], info: parts[1] || "" })
+        var plName = sanitizeText(parts[0])
+        if (!plName) continue
+        playlists.append({ name: plName, info: sanitizeText(parts[1] || "") })
       }
     }
   }
@@ -1428,6 +1470,7 @@ Item {
               Text {
                 width: parent.width
                 text: (root.currentDownloaded ? "↓ " : "") + root.currentArtist + " · " + root.durationLabel(root.currentDuration, root.currentIsLive)
+                textFormat: Text.PlainText
                 color: root.currentDownloaded ? root.accent : root.muted
                 font.family: root.uiFont
                 font.pixelSize: Style.font.caption
@@ -1542,7 +1585,7 @@ Item {
                   }
                 }
               }
-              Text { width: Style.space(34); horizontalAlignment: Text.AlignRight; text: root.playbackDuration > 0 ? root.formatTime(root.playbackDuration) : root.durationLabel(root.currentDuration, root.currentIsLive); color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+              Text { width: Style.space(34); horizontalAlignment: Text.AlignRight; text: root.playbackDuration > 0 ? root.formatTime(root.playbackDuration) : root.durationLabel(root.currentDuration, root.currentIsLive); textFormat: Text.PlainText; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
             }
             Item {
               width: parent.width
@@ -1613,6 +1656,7 @@ Item {
           Text {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
             text: {
               if (root.tabIndex === 0) return "Home · free discovery"
               if (root.tabIndex === 1) return root.searching ? "Searching YouTube…" : (tracks.count > 0 ? "Results" : "Search")
@@ -1632,6 +1676,7 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: root.notice || root.errorMessage
+            textFormat: Text.PlainText
             color: root.notice ? root.accent : "#ff7a7a"
             font.family: root.uiFont
             font.pixelSize: Style.font.caption
@@ -1725,6 +1770,7 @@ Item {
                 id: chipText
                 anchors.centerIn: parent
                 text: name + " (" + info + ")"
+                textFormat: Text.PlainText
                 color: root.openPlaylistName === name ? root.onAccent : root.ink
                 font.family: root.uiFont
                 font.pixelSize: Style.font.caption
@@ -1767,6 +1813,7 @@ Item {
                   id: addChip
                   anchors.centerIn: parent
                   text: name
+                  textFormat: Text.PlainText
                   color: root.addTargetPlaylist === name ? root.onAccent : root.ink
                   font.family: root.uiFont
                   font.pixelSize: Style.font.caption
@@ -2059,6 +2106,7 @@ Item {
                   horizontalAlignment: Text.AlignHCenter
                   wrapMode: Text.WordWrap
                   text: lyricRow.text
+                  textFormat: Text.PlainText
                   color: lyricRow.isActive ? root.accent : root.muted
                   font.family: root.uiFont
                   font.pixelSize: lyricRow.isActive ? Style.font.body : Style.font.bodySmall
@@ -2457,6 +2505,7 @@ Item {
       Text {
         width: parent.width
         text: title
+        textFormat: Text.PlainText
         color: root.ink
         font.family: root.uiFont
         font.pixelSize: Style.font.bodySmall
@@ -2465,6 +2514,7 @@ Item {
       Text {
         width: parent.width
         text: desc
+        textFormat: Text.PlainText
         color: root.muted
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
@@ -2765,10 +2815,11 @@ Item {
         width: parent.width - Style.space(38) - (homeRow.isRadio ? Style.space(40) : Style.space(76)) - parent.spacing * 2
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
-        Text { width: parent.width; text: homeRow.title; color: root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: true; elide: Text.ElideRight }
+        Text { width: parent.width; text: homeRow.title; textFormat: Text.PlainText; color: root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: true; elide: Text.ElideRight }
         Text {
           width: parent.width
           text: (homeRow.artist ? homeRow.artist + " · " : "") + (homeRow.isRadio ? "live radio" : "30s preview + full track")
+          textFormat: Text.PlainText
           color: homeRow.isRadio ? root.accent : root.muted
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
@@ -2862,8 +2913,8 @@ Item {
         width: parent.width - Style.space(36) - Style.space(88) - Style.space(26) - Style.space(34) - parent.spacing * 3
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
-        Text { width: parent.width; text: trackRow.title; color: trackRow.index === root.currentIndex ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.index === root.currentIndex; elide: Text.ElideRight }
-        Text { width: parent.width; text: trackRow.artist; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+        Text { width: parent.width; text: trackRow.title; textFormat: Text.PlainText; color: trackRow.index === root.currentIndex ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.index === root.currentIndex; elide: Text.ElideRight }
+        Text { width: parent.width; text: trackRow.artist; textFormat: Text.PlainText; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
       }
 
       // hover actions: mix · save · +list · download
@@ -2895,7 +2946,7 @@ Item {
         }
       }
 
-      Text { width: Style.space(34); text: root.durationLabel(trackRow.duration, trackRow.isLive); color: trackRow.isLive ? root.accent : root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight; anchors.verticalCenter: parent.verticalCenter }
+      Text { width: Style.space(34); text: root.durationLabel(trackRow.duration, trackRow.isLive); textFormat: Text.PlainText; color: trackRow.isLive ? root.accent : root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight; anchors.verticalCenter: parent.verticalCenter }
 
       // Live wave animation on the track that's on air.
       WaveBars {

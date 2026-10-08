@@ -32,7 +32,9 @@ BarWidget {
   implicitHeight: barSize
 
   function applyViz(line) {
-    var parts = String(line || "").trim().split(/\s+/)
+    var s = String(line || "")
+    if (s.length > 512) return
+    var parts = s.trim().split(/\s+/)
     if (parts.length < 10) return
     var lv = []
     for (var i = 0; i < 10; i++) {
@@ -63,6 +65,7 @@ BarWidget {
   }
 
   function runAction(action) {
+    if (action !== "toggle" && action !== "next" && action !== "previous") return
     if (actionProc.running) return
     actionProc.command = ["bash", scriptPath, action]
     actionProc.running = true
@@ -79,11 +82,15 @@ BarWidget {
       var status = JSON.parse(String(raw || "{}"))
       root.playerRunning = status.running === true
       root.playing = root.playerRunning && status.paused !== true
-      root.title = String(status.title || "")
-      root.artist = String(status.artist || "")
-      root.thumbnail = String(status.thumbnail || "")
+      root.title = String(status.title || "").slice(0, 500)
+      root.artist = String(status.artist || "").slice(0, 500)
+      var thumb = String(status.thumbnail || "")
+      if (thumb !== "" && thumb.indexOf("https://") !== 0 && thumb.indexOf("http://") !== 0 && thumb.indexOf("file://") !== 0) thumb = ""
+      root.thumbnail = thumb.slice(0, 500)
     } catch (error) {
       console.warn("YTMusic Plus bar: invalid player status", error)
+      root.playerRunning = false
+      root.playing = false
     }
   }
 

@@ -26,6 +26,10 @@ Rectangle {
     id: tipLabel
     anchors.centerIn: parent
     text: tip.tipText
+    textFormat: Text.PlainText
+    maximumLineCount: 1
+    elide: Text.ElideRight
+    width: Math.min(implicitWidth, Style.space(220))
     color: Color.tooltip.text
     font.family: Style.font.menuFamily
     font.pixelSize: Style.font.caption
