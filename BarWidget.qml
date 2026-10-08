@@ -6,7 +6,7 @@ import qs.Ui
 
 // Compact bar presence for YTMusic Plus. The full player lives in Player.qml;
 // this widget shows now-playing state and transport controls, all painted with
-// theme tokens (Color.accent / bar foreground) so theme switches repaint it.
+// theme tokens (ShellColor.accent / bar foreground) so theme switches repaint it.
 BarWidget {
   id: root
   moduleName: "local.ytmusic-plus"
@@ -21,7 +21,7 @@ BarWidget {
   property bool downloaded: false
   property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
   readonly property bool hasTrack: title !== ""
-  readonly property color foreground: root.bar ? root.bar.barForeground : Color.foreground
+  readonly property color foreground: root.bar ? root.bar.barForeground : ShellColor.foreground
   readonly property bool opened: popupOpen
   property var vizLevels: []
   property string vizPath: Qt.resolvedUrl("bin/ytviz").toString().replace("file://", "")
@@ -100,9 +100,9 @@ BarWidget {
     width: parent.width
     height: Math.max(Style.space(24), parent.height - Style.space(8))
     radius: Style.space(6)
-    color: root.hasTrack ? Color.bar.background : "transparent"
+    color: root.hasTrack ? ShellColor.bar.background : "transparent"
     border.width: root.hasTrack ? 1 : 0
-    border.color: pillHover.containsMouse ? Color.accent : Color.popups.border
+    border.color: pillHover.containsMouse ? ShellColor.accent : ShellColor.popups.border
     Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
     // Hover glow: soft accent wash fading in on hover. NoButton so it never
@@ -110,7 +110,7 @@ BarWidget {
     Rectangle {
       anchors.fill: parent
       radius: parent.radius
-      color: Color.accent
+      color: ShellColor.accent
       opacity: (pillHover.containsMouse && root.hasTrack) ? 0.10 : 0
       Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
@@ -153,7 +153,7 @@ BarWidget {
         width: parent.height
         height: parent.height
         radius: Style.space(4)
-        color: Color.bar.background
+        color: ShellColor.bar.background
         clip: true
         Image { anchors.fill: parent; source: root.thumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true }
         MouseArea {
@@ -182,7 +182,7 @@ BarWidget {
         width: Style.space(52)
         anchors.verticalCenter: parent.verticalCenter
         levels: root.vizLevels
-        barColor: Color.accent
+        barColor: ShellColor.accent
       }
 
       Item {
@@ -196,7 +196,7 @@ BarWidget {
           width: Style.space(20)
           height: width
           radius: width / 2
-          color: Color.accent
+          color: ShellColor.accent
           opacity: prevMouse.containsMouse ? 0.18 : 0
           Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         }
@@ -216,12 +216,12 @@ BarWidget {
         Rectangle {
           anchors.fill: parent
           radius: width / 2
-          color: Color.accent
+          color: ShellColor.accent
           opacity: playMouse.containsMouse ? 0.22 : 0
           Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         }
-        Text { anchors.centerIn: parent; text: "󰏤"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
-        Text { anchors.centerIn: parent; text: "󰐊"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
+        Text { anchors.centerIn: parent; text: "󰏤"; color: ShellColor.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
+        Text { anchors.centerIn: parent; text: "󰐊"; color: ShellColor.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
         MouseArea {
           id: playMouse
           anchors.fill: parent
@@ -245,7 +245,7 @@ BarWidget {
           width: Style.space(20)
           height: width
           radius: width / 2
-          color: Color.accent
+          color: ShellColor.accent
           opacity: nextMouse.containsMouse ? 0.18 : 0
           Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         }

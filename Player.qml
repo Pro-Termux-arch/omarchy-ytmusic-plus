@@ -7,7 +7,7 @@ import qs.Commons
 import qs.Ui
 
 // YTMusic Plus player: search, queue, playlists, saved tracks, offline downloads.
-// All painting uses theme tokens (Color.* / Style.*) — no hardcoded brand colors.
+// All painting uses theme tokens (ShellColor.* / Style.*) — no hardcoded brand colors.
 Item {
   id: root
 
@@ -16,15 +16,15 @@ Item {
 
   // Theme-derived roles. surfaces follow the active Omarchy theme; the accent
   // (and its readable on-accent) repaint automatically on theme switches.
-  readonly property color ink: Color.popups.text
-  readonly property color surface: Color.popups.background
-  readonly property color border: Color.popups.border
-  readonly property color muted: Color.muted
-  readonly property color accent: Color.accent
+  readonly property color ink: ShellColor.popups.text
+  readonly property color surface: ShellColor.popups.background
+  readonly property color border: ShellColor.popups.border
+  readonly property color muted: ShellColor.muted
+  readonly property color accent: ShellColor.accent
   readonly property color raised: Style.normalFill
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.7 stable"
+  readonly property string appVersion: "v1.7.1"
 
   property bool opened: false
   property bool searching: false
@@ -1283,7 +1283,7 @@ Item {
             Rectangle {
               anchors.fill: parent
               radius: height / 2
-              color: Color.bar.background
+              color: ShellColor.bar.background
               border.width: 1
               border.color: root.border
             }
