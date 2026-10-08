@@ -1,11 +1,14 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **3** (v1.0 stable → v1.1 beta → v1.2 beta → v1.3 stable)
+Updates so far: **3** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.3 stable (current)
+## v1.4 stable (current)
+
+> Renamed from v1.3: per project rule, going stable always bumps the
+> version, so the published stable is v1.4 (same content as the v1.3 beta).
 
 - Settings that actually stick: fixed the status-poll merge race that reverted
   every change within a second; all state writes are now truncation-proof
