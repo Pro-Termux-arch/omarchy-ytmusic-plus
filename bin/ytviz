@@ -19,15 +19,51 @@ _COEFFS = [2.0 * math.cos(2.0 * math.pi * f / RATE) for f in BANDS]
 
 
 def default_monitor():
+    # Robust monitor resolution: enumerate `pactl list short sources` for
+    # *.monitor first. Prefer the default sink's monitor when identifiable,
+    # otherwise the first .monitor. Return the numeric source id — pw-record
+    # --target reliably accepts the id, while the ".monitor" node-name string
+    # fails on PipeWire 1.6.x ("no target node available").
+    # Fallback chain: enumerated id -> constructed "sink.monitor" (best effort
+    # when enumeration itself failed) -> None (exit non-zero with clear stderr).
     try:
-        sink = subprocess.check_output(
+        default_sink = subprocess.check_output(
             ["pactl", "get-default-sink"], text=True, timeout=5
-        ).strip()
+        ).strip() or None
     except Exception:
+        default_sink = None
+    monitors = []  # list of (id, name)
+    listed = False
+    try:
+        out = subprocess.check_output(
+            ["pactl", "list", "short", "sources"], text=True, timeout=5
+        )
+        listed = True
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                sid, name = parts[0], parts[1]
+                if name.endswith(".monitor"):
+                    monitors.append((sid, name))
+    except Exception:
+        listed = False
+        monitors = []
+    if monitors:
+        if default_sink:
+            want = default_sink + ".monitor"
+            for sid, name in monitors:
+                if name == want:
+                    return sid
+            for sid, name in monitors:
+                if name.startswith(default_sink):
+                    return sid
+        return monitors[0][0]
+    if listed:
+        # Enumeration worked but no monitors exist: fail fast, don't guess.
         return None
-    if not sink:
-        return None
-    return sink + ".monitor"
+    if default_sink:
+        return default_sink + ".monitor"
+    return None
 
 
 def goertzel(samples, coeff):
@@ -42,7 +78,7 @@ def goertzel(samples, coeff):
 def main():
     monitor = default_monitor()
     if not monitor:
-        sys.stderr.write("ytviz: no default sink\n")
+        sys.stderr.write("ytviz: no monitor source found (pactl list short sources has no *.monitor)\n")
         return 1
     try:
         rec = subprocess.Popen(
@@ -56,6 +92,7 @@ def main():
     frame_bytes = CHUNK * 2
     peaks = [1e-9] * NBANDS
     disp = [0.0] * NBANDS
+    lines = 0
     try:
         while True:
             raw = rec.stdout.read(frame_bytes)
@@ -77,6 +114,7 @@ def main():
                 out.append(str(int(disp[b])))
             sys.stdout.write(" ".join(out) + "\n")
             sys.stdout.flush()
+            lines += 1
     except (BrokenPipeError, KeyboardInterrupt):
         pass
     finally:
@@ -84,6 +122,16 @@ def main():
             rec.kill()
         except Exception:
             pass
+    if lines == 0:
+        # pw-record died immediately (bad target) or yielded no frames:
+        # silent success would leave callers idling on zero bars. Fail loudly
+        # so viz-test and BarWidget fall back to idle pulse.
+        try:
+            rc = rec.poll()
+        except Exception:
+            rc = None
+        sys.stderr.write("ytviz: no audio data from target %s (pw-record rc=%s)\n" % (monitor, rc))
+        return 1
     return 0
 
 

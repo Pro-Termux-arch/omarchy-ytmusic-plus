@@ -1,11 +1,28 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **3** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable)
+Updates so far: **4** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.4 stable (current)
+## v1.5 beta (current)
+
+- Phantom playing state fixed: stale mpv socket no longer sticks the transport
+  on the pause glyph — `status` cleans the dead socket and reports
+  `running:false`, and `toggle` re-syncs promptly (bar + popup fix at once)
+- Visualizer revived: robust PipeWire monitor resolution (enumerates
+  `pactl list short sources` for `*.monitor` first, numeric `--target`, clear
+  stderr + non-zero exit when none), new `viz-test` one-command diagnosis,
+  bar backoff (1.5s → 30s cap, resets on first bars); system mix by design,
+  flat dim line when paused
+- Lyrics animation redo (sync untouched): slide-up + fade on activation,
+  breathing Glow (radius 8↔14, scale pulse dropped), distance dimming
+  (1.0 / 0.85 / 0.6 / 0.35); auto-scroll-center, tap-to-seek, ±0.2s nudge,
+  per-track offsets, `[offset:]` tags unchanged
+- Progress bar: smooth 120ms fill, glowing accent knob on the head,
+  hover 3px→5px thickening, pixel-perfect click/drag scrubbing, labels intact
+
+## v1.4 stable
 
 > Renamed from v1.3: per project rule, going stable always bumps the
 > version, so the published stable is v1.4 (same content as the v1.3 beta).

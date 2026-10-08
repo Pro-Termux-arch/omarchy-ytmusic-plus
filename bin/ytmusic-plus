@@ -648,7 +648,18 @@ case "${1:-}" in
     ;;
   toggle)
     require socat
-    ipc '{"command":["cycle","pause"]}' >/dev/null
+    ipc '{"command":["cycle","pause"]}' >/dev/null || true
+    # Re-sync promptly: QML flips `playing` optimistically and relies on the
+    # next status poll. Give mpv a moment to apply the pause flip, then probe
+    # so a dead socket is cleaned now (next status is running:false, not
+    # empty). Stdout stays empty (existing contract).
+    sleep 0.1
+    if [[ -S "$SOCKET" ]]; then
+      if ! printf '%s\n' '{"command":["get_property","pause"],"request_id":1}' \
+        | socat -T 0.4 - "UNIX-CONNECT:$SOCKET" 2>/dev/null | grep -q .; then
+        rm -f -- "$SOCKET" "$PID_FILE"
+      fi
+    fi
     ;;
   pause)
     require socat
@@ -703,6 +714,25 @@ case "${1:-}" in
       '{"command":["get_property","time-pos"],"request_id":2}' \
       '{"command":["get_property","duration"],"request_id":3}' \
       | socat -T 0.4 - "UNIX-CONNECT:$SOCKET" 2>/dev/null || true)"
+    # mpv died abnormally: socket file lingers but socat gets nothing.
+    # Without this, `jq -sc ... <<<""` prints NOTHING (exit 0) and QML
+    # JSON.parse throws, leaving stale playing=true. Clean up and fall
+    # through to the not-running branch so callers get running:false.
+    if [[ -z "${responses//[[:space:]]/}" ]]; then
+      rm -f -- "$SOCKET" "$PID_FILE"
+      if [[ -s "$STATE_FILE" ]]; then
+        jq -c --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
+          --argjson silence "$silence_on" --argjson normalize "$norm_on" \
+          --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
+          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}' "$STATE_FILE"
+      else
+        jq -cn --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
+          --argjson silence "$silence_on" --argjson normalize "$norm_on" \
+          --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
+          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}'
+      fi
+      exit 0
+    fi
     if [[ -s "$STATE_FILE" ]]; then
       jq -sc --slurpfile track "$STATE_FILE" --slurpfile queue "$QUEUE_FILE" \
         --arg loop "$loop_mode" --argjson silence "$silence_on" --argjson normalize "$norm_on" \
@@ -1195,8 +1225,45 @@ case "${1:-}" in
     [[ -n "$out" ]] || { printf 'No lyrics found (instrumental?)\n' >&2; exit 1; }
     printf '%s' "$out" | tee "$key"
     ;;
+  viz-test)
+    # One-command visualizer diagnosis: run sibling ytviz ~2s, print bars
+    # or the exact error. Exit 0 on bars, non-zero on failure.
+    viz_bin="$(dirname "$(readlink -f "$0")")/ytviz"
+    [[ -x "$viz_bin" ]] || { printf 'viz-test: ytviz not found at %s\n' "$viz_bin" >&2; exit 1; }
+    err_tmp="$RUNTIME_DIR/viz-test.err"
+    out_tmp="$RUNTIME_DIR/viz-test.out"
+    rm -f -- "$err_tmp" "$out_tmp"
+    rc=0
+    if command -v timeout >/dev/null 2>&1; then
+      if timeout -s TERM 2 "$viz_bin" >"$out_tmp" 2>"$err_tmp"; then
+        rc=0
+      else
+        rc=$?
+      fi
+    else
+      "$viz_bin" >"$out_tmp" 2>"$err_tmp" &
+      viz_pid=$!
+      sleep 2
+      kill -TERM "$viz_pid" 2>/dev/null || true
+      if wait "$viz_pid" 2>/dev/null; then rc=0; else rc=$?; fi
+    fi
+    if [[ -s "$out_tmp" ]] && grep -qE '^[0-9]+( [0-9]+){9}$' "$out_tmp"; then
+      head -n 5 "$out_tmp"
+      rm -f -- "$err_tmp" "$out_tmp"
+      exit 0
+    fi
+    if [[ -s "$err_tmp" ]]; then
+      cat -- "$err_tmp" >&2
+    elif [[ -s "$out_tmp" ]]; then
+      cat -- "$out_tmp" >&2
+    else
+      printf 'viz-test: no bars from %s (rc=%s)\n' "$viz_bin" "$rc" >&2
+    fi
+    rm -f -- "$err_tmp" "$out_tmp"
+    if [[ "$rc" -eq 0 || "$rc" -eq 124 || "$rc" -eq 143 ]]; then exit 1; else exit "$rc"; fi
+    ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear|viz-test>\n' >&2
     exit 2
     ;;
 esac

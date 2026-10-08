@@ -25,6 +25,8 @@ BarWidget {
   readonly property bool opened: popupOpen
   property var vizLevels: []
   property string vizPath: Qt.resolvedUrl("bin/ytviz").toString().replace("file://", "")
+  property int vizFailCount: 0
+  property double vizLastFailMs: 0
 
   implicitWidth: hasTrack ? Style.space(218) : Style.space(30)
   implicitHeight: barSize
@@ -38,6 +40,7 @@ BarWidget {
       lv.push(isFinite(n) ? Math.max(0, Math.min(100, n)) : 0)
     }
     vizLevels = lv
+    vizFailCount = 0
   }
 
   function openPlayer() { root.toggle("{}") }
@@ -218,11 +221,19 @@ BarWidget {
   }
 
   // Live spectrum from the output monitor (ytviz). Streams text lines; dies
-  // quietly without a monitor, and the bars idle-pulse instead.
+  // quietly without a monitor, and the bars idle as a flat dim line instead.
+  // NOTE: the monitor is the SYSTEM mix by design, so browser/Discord audio
+  // also moves the bars. We only run ytviz while our player reports playing.
   Process {
     id: vizProc
     stdout: SplitParser { onRead: function(line) { root.applyViz(line) } }
-    onExited: root.vizLevels = []
+    onExited: {
+      root.vizLevels = []
+      if (root.hasTrack && root.playing) {
+        root.vizFailCount += 1
+        root.vizLastFailMs = Date.now()
+      }
+    }
   }
 
   Timer {
@@ -233,12 +244,22 @@ BarWidget {
     onTriggered: {
       root.refreshStatus()
       var want = root.hasTrack && root.playing
-      if (want && !vizProc.running) {
-        vizProc.command = [vizPath]
-        vizProc.running = true
-      } else if (!want && vizProc.running) {
-        vizProc.running = false
-        root.vizLevels = []
+      if (!want) {
+        if (vizProc.running) vizProc.running = false
+        if (root.vizLevels.length) root.vizLevels = []
+        if (root.vizFailCount !== 0) root.vizFailCount = 0
+        return
+      }
+      if (!vizProc.running) {
+        var backoff = 0
+        if (root.vizFailCount > 0) {
+          var shift = Math.min(5, root.vizFailCount - 1)
+          backoff = Math.min(30000, 1500 * Math.pow(2, shift))
+        }
+        if (Date.now() - root.vizLastFailMs >= backoff) {
+          vizProc.command = [vizPath]
+          vizProc.running = true
+        }
       }
     }
   }

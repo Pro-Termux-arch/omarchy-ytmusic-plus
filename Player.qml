@@ -24,7 +24,7 @@ Item {
   readonly property color raised: Style.normalFill
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.4 stable"
+  readonly property string appVersion: "v1.5 beta"
 
   property bool opened: false
   property bool searching: false
@@ -1491,18 +1491,46 @@ Item {
               Rectangle {
                 id: seekBar
                 width: Math.max(Style.space(40), parent.width - Style.space(34) * 2 - timeRow.spacing * 2)
-                height: Style.space(3)
+                height: seekHover.containsMouse ? Style.space(5) : Style.space(3)
                 radius: height / 2
                 color: root.raised
                 anchors.verticalCenter: parent.verticalCenter
+                Behavior on height { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                 Rectangle {
+                  id: seekFill
                   width: parent.width * Math.min(1, root.position / Math.max(1, root.playbackDuration))
                   height: parent.height
                   radius: height / 2
                   color: root.accent
+                  Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                }
+                Rectangle {
+                  id: seekKnob
+                  width: Style.space(10)
+                  height: Style.space(10)
+                  radius: width / 2
+                  color: root.accent
+                  border.color: root.surface
+                  border.width: 1
+                  anchors.verticalCenter: parent.verticalCenter
+                  x: Math.min(parent.width - width / 2, Math.max(-width / 2, seekFill.width - width / 2))
+                  visible: root.playbackDuration > 0
+                  opacity: seekHover.containsMouse || root.playing ? 1 : 0.85
+                  Behavior on opacity { NumberAnimation { duration: 120 } }
+                }
+                Glow {
+                  anchors.fill: seekKnob
+                  source: seekKnob
+                  color: root.accent
+                  radius: 6
+                  samples: 13
+                  spread: 0.4
+                  transparentBorder: true
+                  visible: seekKnob.visible
                 }
                 // Scrub like a video timeline: click or drag anywhere.
                 MouseArea {
+                  id: seekHover
                   anchors.fill: parent
                   anchors.topMargin: -Style.space(6)
                   anchors.bottomMargin: -Style.space(6)
@@ -2019,9 +2047,12 @@ Item {
                 required property int index
                 required property string text
                 readonly property bool isActive: root.currentLyricIndex === index
-                readonly property bool isNear: Math.abs(root.currentLyricIndex - index) <= 2
+                readonly property int dist: Math.abs(root.currentLyricIndex - index)
                 width: ListView.view ? ListView.view.width : 0
                 height: lyricText.height + Style.space(2)
+                opacity: !root.lyricsSynced ? 1.0 : (isActive ? 1.0 : (dist === 1 ? 0.85 : (dist === 2 ? 0.6 : 0.35)))
+                Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+                onIsActiveChanged: if (isActive && root.lyricsSynced) activateAnim.restart()
                 Text {
                   id: lyricText
                   width: parent.width
@@ -2029,13 +2060,11 @@ Item {
                   wrapMode: Text.WordWrap
                   text: lyricRow.text
                   color: lyricRow.isActive ? root.accent : root.muted
-                  opacity: lyricRow.isActive ? 1 : (lyricRow.isNear ? 0.8 : 0.45)
                   font.family: root.uiFont
                   font.pixelSize: lyricRow.isActive ? Style.font.body : Style.font.bodySmall
                   font.bold: lyricRow.isActive
                   font.italic: !root.lyricsSynced
-                  scale: lyricRow.isActive ? lyricPulse.pulse : 1.0
-                  Behavior on opacity { NumberAnimation { duration: 200 } }
+                  transform: Translate { id: lyricSlide; y: 0 }
                 }
                 MouseArea {
                   anchors.fill: parent
@@ -2044,22 +2073,27 @@ Item {
                   onClicked: { if (root.lyricsSynced) root.seekToLyric(lyricRow.index) }
                 }
                 Glow {
+                  id: lyricGlow
                   anchors.fill: lyricText
                   source: lyricText
                   color: root.accent
-                  radius: 12
+                  radius: 8
                   samples: 25
                   spread: 0.3
                   visible: lyricRow.isActive && root.lyricsSynced
                 }
+                ParallelAnimation {
+                  id: activateAnim
+                  NumberAnimation { target: lyricSlide; property: "y"; from: 8; to: 0; duration: 280; easing.type: Easing.OutCubic }
+                  NumberAnimation { target: lyricText; property: "opacity"; from: 0; to: 1; duration: 280; easing.type: Easing.OutCubic }
+                }
                 SequentialAnimation {
-                  id: lyricPulse
-                  property real pulse: 1.0
+                  id: glowBreath
                   running: lyricRow.isActive && root.lyricsSynced
                   loops: Animation.Infinite
-                  NumberAnimation { target: lyricPulse; property: "pulse"; to: 1.035; duration: 900; easing.type: Easing.InOutQuad }
-                  NumberAnimation { target: lyricPulse; property: "pulse"; to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
-                  onStopped: lyricPulse.pulse = 1.0
+                  NumberAnimation { target: lyricGlow; property: "radius"; from: 8; to: 14; duration: 800; easing.type: Easing.InOutQuad }
+                  NumberAnimation { target: lyricGlow; property: "radius"; from: 14; to: 8; duration: 800; easing.type: Easing.InOutQuad }
+                  onStopped: lyricGlow.radius = 8
                 }
               }
             }
