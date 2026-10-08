@@ -40,7 +40,7 @@ omarchy plugin add https://github.com/Pro-Termux-arch/omarchy-ytmusic-plus.git -
 Open it from the bar icon or directly:
 
 ```sh
-omarchy-shell shell toggle local.ytmusic-plus '{}'
+omarchy-shell local.ytmusic-plus toggle
 ```
 
 Optional shortcuts — add to `~/.config/hypr/bindings.lua`:
@@ -50,6 +50,19 @@ pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/local.ytmusic-plus/
 ```
 
 - `Super + Ctrl + Shift + M` toggles the player.
+
+## Removal
+
+```sh
+omarchy plugin remove local.ytmusic-plus
+```
+
+Your library, playlists, downloads, and fonts stay untouched. To wipe
+them too, delete `~/.local/share/omarchy-ytmusic-plus/`,
+`~/.cache/omarchy-ytmusic-plus/`, and `~/Music/ytmusic-plus/` by hand
+(the runtime dir under `$XDG_RUNTIME_DIR` vanishes on reboot anyway).
+Remove the `pcall(dofile, ...)` line from `~/.config/hypr/bindings.lua`
+if you added the optional shortcut.
 
 ## Privacy notes
 

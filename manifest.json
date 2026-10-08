@@ -3,7 +3,7 @@
   "id": "local.ytmusic-plus",
   "name": "YTMusic Plus",
   "version": "1.7.0",
-  "author": "local",
+  "author": "Pro-Termux-arch",
   "license": "MIT",
   "description": "Privacy-first, login-free YouTube music player: search, mixes, playlists, saved tracks and offline downloads.",
   "kinds": [
