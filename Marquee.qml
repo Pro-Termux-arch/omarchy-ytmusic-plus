@@ -24,6 +24,12 @@ Item {
     font.bold: mq.bold
     elide: Text.ElideRight
     width: Math.min(Math.max(mq.width, implicitWidth), mq.width + 6000)
+    opacity: 1.0
+    Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+    onTextChanged: {
+      mqText.opacity = 0.3
+      Qt.callLater(function() { mqText.opacity = 1.0 })
+    }
 
     SequentialAnimation on x {
       running: mq.overflowing && mq.visible

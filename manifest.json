@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "local.ytmusic-plus",
   "name": "YTMusic Plus",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "author": "local",
   "license": "MIT",
   "description": "Privacy-first, login-free YouTube music player: search, mixes, playlists, saved tracks and offline downloads.",

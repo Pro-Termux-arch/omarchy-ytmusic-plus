@@ -33,8 +33,10 @@ Item {
           : 2
         radius: 1.5
         color: viz.live ? viz.barColor : viz.dimColor
+        opacity: viz.live ? 0.55 + viz.levelAt(index) / 100 * 0.45 : 1.0
         anchors.verticalCenter: parent.verticalCenter
-        Behavior on height { NumberAnimation { duration: 90 } }
+        Behavior on height { NumberAnimation { duration: 90 + index * 12; easing.type: Easing.OutCubic } }
+        Behavior on opacity { NumberAnimation { duration: 90 + index * 12; easing.type: Easing.OutCubic } }
       }
     }
   }

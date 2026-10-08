@@ -95,16 +95,35 @@ BarWidget {
   }
 
   Rectangle {
+    id: pillBg
     anchors.centerIn: parent
     width: parent.width
     height: Math.max(Style.space(24), parent.height - Style.space(8))
     radius: Style.space(6)
     color: root.hasTrack ? Color.bar.background : "transparent"
     border.width: root.hasTrack ? 1 : 0
-    border.color: Color.popups.border
+    border.color: pillHover.containsMouse ? Color.accent : Color.popups.border
+    Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+    // Hover glow: soft accent wash fading in on hover. NoButton so it never
+    // steals body/button clicks; declared lowest so click areas stay on top.
+    Rectangle {
+      anchors.fill: parent
+      radius: parent.radius
+      color: Color.accent
+      opacity: (pillHover.containsMouse && root.hasTrack) ? 0.10 : 0
+      Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    }
+
+    MouseArea {
+      id: pillHover
+      anchors.fill: parent
+      acceptedButtons: Qt.NoButton
+      hoverEnabled: true
+    }
 
     // Body click: anywhere on the pill that isn't a button opens the player.
-    // Declared first (lowest) so every control above keeps its own clicks.
+    // Declared above the hover detector so clicks still land here.
     MouseArea {
       anchors.fill: parent
       cursorShape: Qt.PointingHandCursor
@@ -169,8 +188,20 @@ BarWidget {
       Item {
         width: Style.space(20)
         height: parent.height
+        scale: prevMouse.pressed ? 0.9 : 1.0
+        transformOrigin: Item.Center
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(20)
+          height: width
+          radius: width / 2
+          color: Color.accent
+          opacity: prevMouse.containsMouse ? 0.18 : 0
+          Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        }
         Text { anchors.centerIn: parent; text: "󰒮"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
-        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("previous") }
+        MouseArea { id: prevMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("previous") }
       }
 
       Rectangle {
@@ -178,10 +209,23 @@ BarWidget {
         height: width
         radius: width / 2
         color: "transparent"
+        scale: playMouse.pressed ? 0.9 : 1.0
+        transformOrigin: Item.Center
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
         anchors.verticalCenter: parent.verticalCenter
-        Text { anchors.centerIn: parent; text: root.playing ? "󰏤" : "󰐊"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
-        MouseArea {
+        Rectangle {
           anchors.fill: parent
+          radius: width / 2
+          color: Color.accent
+          opacity: playMouse.containsMouse ? 0.22 : 0
+          Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        }
+        Text { anchors.centerIn: parent; text: "󰏤"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
+        Text { anchors.centerIn: parent; text: "󰐊"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
+        MouseArea {
+          id: playMouse
+          anchors.fill: parent
+          hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onClicked: {
             if (root.playerRunning) root.runAction("toggle")
@@ -193,8 +237,20 @@ BarWidget {
       Item {
         width: Style.space(20)
         height: parent.height
+        scale: nextMouse.pressed ? 0.9 : 1.0
+        transformOrigin: Item.Center
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+        Rectangle {
+          anchors.centerIn: parent
+          width: Style.space(20)
+          height: width
+          radius: width / 2
+          color: Color.accent
+          opacity: nextMouse.containsMouse ? 0.18 : 0
+          Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        }
         Text { anchors.centerIn: parent; text: "󰒭"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
-        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
+        MouseArea { id: nextMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
       }
     }
   }

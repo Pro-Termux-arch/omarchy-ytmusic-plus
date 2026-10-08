@@ -22,12 +22,19 @@ Item {
         height: 12
         radius: 1.5
         color: wb.barColor
+        opacity: 0.85
         anchors.verticalCenter: parent.verticalCenter
         SequentialAnimation on height {
           running: wb.active && wb.visible
           loops: Animation.Infinite
-          NumberAnimation { to: 4; duration: 360 + index * 110; easing.type: Easing.InOutSine }
-          NumberAnimation { to: 12; duration: 360 + index * 110; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 4; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 12; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
+        }
+        SequentialAnimation on opacity {
+          running: wb.active && wb.visible
+          loops: Animation.Infinite
+          NumberAnimation { to: 0.55; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 1.0; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
         }
       }
     }

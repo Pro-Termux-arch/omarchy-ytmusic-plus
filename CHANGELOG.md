@@ -1,11 +1,25 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **5** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable)
+Updates so far: **6** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.6 stable (current)
+## v1.7 stable (current)
+
+- Track-row hover buttons no longer vanish under the cursor: new `rowHovered`
+  state covers the row plus all four action buttons (Qt gives hover only to
+  the topmost item, which used to kill the fade trigger); buttons also
+  brighten + grow subtly on direct hover
+- Lyrics readability fix: active line is crisp bright ink under a soft halo
+  (was accent-on-accent floodlight) — slide/fade, breathing, dimming and
+  sync timing unchanged
+- Motion upgrade everywhere, behavior-identical: pill hover wash + accent
+  border, transport halos with press-scale, play/pause glyph crossfade,
+  VizBars left-to-right ripple, prime-staggered WaveBars shimmer, gliding
+  dock indicator, card entrance, hover-growing EQ handles and seek knob
+
+## v1.6 stable
 
 > Promoted from v1.5 beta: per project rule, going stable always bumps the
 > version. This is a security-hardening release — full word-by-word audit of

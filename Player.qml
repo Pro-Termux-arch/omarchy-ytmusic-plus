@@ -24,7 +24,7 @@ Item {
   readonly property color raised: Style.normalFill
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.6 stable"
+  readonly property string appVersion: "v1.7 stable"
 
   property bool opened: false
   property bool searching: false
@@ -1223,6 +1223,9 @@ Item {
     border.width: 1
     border.color: root.border
     clip: true
+    transformOrigin: Item.Center
+    scale: root.opened ? 1 : 0.985
+    Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
     Image {
       anchors.fill: parent
@@ -1293,8 +1296,8 @@ Item {
               height: parent.height - Style.space(8)
               radius: height / 2
               color: root.accent
-              Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-              Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+              Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+              Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             }
 
             Row {
@@ -1325,6 +1328,7 @@ Item {
                     font.family: modelData.icon ? root.iconFont : root.uiFont
                     font.pixelSize: Math.max(8, Style.font.caption - 1)
                     font.bold: root.tabIndex === index
+                    Behavior on color { ColorAnimation { duration: 120 } }
                   }
                   MouseArea {
                     id: dockHover
@@ -1484,6 +1488,10 @@ Item {
               font.family: root.iconFont
               font.pixelSize: Style.font.iconLarge
               anchors.verticalCenter: parent.verticalCenter
+              transformOrigin: Item.Center
+              scale: npSaveHover.pressed ? 0.85 : 1.0
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+              Behavior on color { ColorAnimation { duration: 120 } }
               MouseArea {
                 id: npSaveHover
                 anchors.fill: parent
@@ -1504,6 +1512,10 @@ Item {
               font.family: root.iconFont
               font.pixelSize: Style.font.iconLarge
               anchors.verticalCenter: parent.verticalCenter
+              transformOrigin: Item.Center
+              scale: npDlHover.pressed ? 0.85 : 1.0
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+              Behavior on color { ColorAnimation { duration: 120 } }
               MouseArea {
                 id: npDlHover
                 anchors.fill: parent
@@ -1559,7 +1571,10 @@ Item {
                   x: Math.min(parent.width - width / 2, Math.max(-width / 2, seekFill.width - width / 2))
                   visible: root.playbackDuration > 0
                   opacity: seekHover.containsMouse || root.playing ? 1 : 0.85
+                  transformOrigin: Item.Center
+                  scale: (seekHover.containsMouse || seekHover.pressed) ? 1.25 : 1.0
                   Behavior on opacity { NumberAnimation { duration: 120 } }
+                  Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                 }
                 Glow {
                   anchors.fill: seekKnob
@@ -2107,7 +2122,7 @@ Item {
                   wrapMode: Text.WordWrap
                   text: lyricRow.text
                   textFormat: Text.PlainText
-                  color: lyricRow.isActive ? root.accent : root.muted
+                  color: lyricRow.isActive ? root.ink : root.muted
                   font.family: root.uiFont
                   font.pixelSize: lyricRow.isActive ? Style.font.body : Style.font.bodySmall
                   font.bold: lyricRow.isActive
@@ -2124,10 +2139,10 @@ Item {
                   id: lyricGlow
                   anchors.fill: lyricText
                   source: lyricText
-                  color: root.accent
-                  radius: 8
-                  samples: 25
-                  spread: 0.3
+                  color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.65)
+                  radius: 3
+                  samples: 17
+                  spread: 0.25
                   visible: lyricRow.isActive && root.lyricsSynced
                 }
                 ParallelAnimation {
@@ -2139,9 +2154,9 @@ Item {
                   id: glowBreath
                   running: lyricRow.isActive && root.lyricsSynced
                   loops: Animation.Infinite
-                  NumberAnimation { target: lyricGlow; property: "radius"; from: 8; to: 14; duration: 800; easing.type: Easing.InOutQuad }
-                  NumberAnimation { target: lyricGlow; property: "radius"; from: 14; to: 8; duration: 800; easing.type: Easing.InOutQuad }
-                  onStopped: lyricGlow.radius = 8
+                  NumberAnimation { target: lyricGlow; property: "radius"; from: 3; to: 6; duration: 800; easing.type: Easing.InOutQuad }
+                  NumberAnimation { target: lyricGlow; property: "radius"; from: 6; to: 3; duration: 800; easing.type: Easing.InOutQuad }
+                  onStopped: lyricGlow.radius = 3
                 }
               }
             }
@@ -2603,6 +2618,10 @@ Item {
     color: "transparent"
     border.width: 1
     border.color: cycHover.containsMouse ? root.accent : root.muted
+    transformOrigin: Item.Center
+    scale: cycHover.pressed ? 0.96 : 1.0
+    Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+    Behavior on border.color { ColorAnimation { duration: 120 } }
     Text {
       id: cycLabel
       anchors.centerIn: parent
@@ -2611,6 +2630,7 @@ Item {
       font.family: root.uiFont
       font.pixelSize: Style.font.caption
       font.bold: true
+      Behavior on color { ColorAnimation { duration: 120 } }
     }
     MouseArea {
       id: cycHover
@@ -2635,7 +2655,11 @@ Item {
     color: sbtnHover.containsMouse ? root.accent : "transparent"
     border.width: 1
     border.color: root.accent
+    transformOrigin: Item.Center
+    scale: sbtnHover.pressed ? 0.96 : 1.0
     Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+    Behavior on border.color { ColorAnimation { duration: 120 } }
     Text {
       id: sbtnLabel
       anchors.centerIn: parent
@@ -2644,6 +2668,7 @@ Item {
       font.family: root.uiFont
       font.pixelSize: Style.font.caption
       font.bold: true
+      Behavior on color { ColorAnimation { duration: 120 } }
     }
     MouseArea {
       id: sbtnHover
@@ -2703,11 +2728,15 @@ Item {
         width: Style.space(12)
         height: Style.space(12)
         radius: width / 2
-        color: eqHandle.containsMouse ? root.accent : root.ink
+        color: (eqHandle.containsMouse || eqHandle.pressed) ? root.accent : root.ink
         border.width: 1
         border.color: root.accent
         anchors.horizontalCenter: parent.horizontalCenter
         y: parent.height / 2 - eqs.gain / 12 * (parent.height / 2) - height / 2
+        transformOrigin: Item.Center
+        scale: (eqHandle.containsMouse || eqHandle.pressed) ? 1.3 : 1.0
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 120 } }
       }
       MouseArea {
         id: eqHandle
@@ -2747,20 +2776,23 @@ Item {
     width: btnSize
     height: btnSize
     radius: btnSize / 2
-    scale: btnHover.pressed ? 0.9 : 1.0
+    transformOrigin: Item.Center
+    scale: btnHover.pressed ? 0.92 : 1.0
     color: primary
       ? (btnHover.containsMouse ? root.accent : "transparent")
       : (btnHover.containsMouse ? root.raised : "transparent")
     border.width: (primary || active) ? 2 : 1
     border.color: primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))
-    Behavior on scale { NumberAnimation { duration: 90 } }
+    Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
     Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on border.color { ColorAnimation { duration: 120 } }
     Text {
       anchors.centerIn: parent
       text: tbtn.glyph
       color: (tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)
       font.family: root.iconFont
       font.pixelSize: tbtn.large ? Style.font.iconLarge : Style.font.bodySmall
+      Behavior on color { ColorAnimation { duration: 120 } }
     }
     MouseArea {
       id: btnHover
@@ -2785,6 +2817,7 @@ Item {
     height: Style.space(48)
     radius: Style.space(7)
     color: homeArea.containsMouse ? root.raised : "transparent"
+    Behavior on color { ColorAnimation { duration: 120 } }
 
     Row {
       z: 2
@@ -2845,6 +2878,10 @@ Item {
         border.color: ytHover.containsMouse ? root.accent : root.muted
         anchors.verticalCenter: parent.verticalCenter
         visible: !homeRow.isRadio
+        transformOrigin: Item.Center
+        scale: ytHover.pressed ? 0.94 : 1.0
+        Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+        Behavior on border.color { ColorAnimation { duration: 120 } }
         Text {
           anchors.centerIn: parent
           text: "YT"
@@ -2852,6 +2889,7 @@ Item {
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
           font.bold: true
+          Behavior on color { ColorAnimation { duration: 120 } }
         }
         MouseArea {
           id: ytHover
@@ -2890,7 +2928,8 @@ Item {
     height: Style.space(46)
     opacity: (root.listMode === "queue" && root.currentIndex >= 0 && index < root.currentIndex) ? 0.45 : 1
     radius: Style.space(7)
-    color: index === root.selectedIndex ? root.raised : ((trackArea.containsMouse) ? root.raised : "transparent")
+    readonly property bool rowHovered: trackArea.containsMouse || mixArea.containsMouse || saveArea.containsMouse || listArea.containsMouse || dlArea.containsMouse
+    color: index === root.selectedIndex ? root.raised : (rowHovered ? root.raised : "transparent")
 
     Row {
       z: 2 // above trackArea (declared later) so the hover buttons get clicks
@@ -2921,27 +2960,35 @@ Item {
       Item {
         width: Style.space(88)
         height: parent.height
-        opacity: trackArea.containsMouse ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 90 } }
+        opacity: rowHovered ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         Row {
           id: hoverRow
           anchors.centerIn: parent
           spacing: Style.space(8)
           Text {
-            text: "󰀃"; color: root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
-            MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.startMix(trackRow.videoId) }
+            text: "󰀃"; color: mixArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
+            scale: mixArea.containsMouse ? 1.12 : 1.0
+            Behavior on scale { NumberAnimation { duration: 120 } }
+            MouseArea { id: mixArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.startMix(trackRow.videoId) }
           }
           Text {
-            text: "󰣐"; color: root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
-            MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.saveTrack(trackRow.index) }
+            text: "󰣐"; color: saveArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
+            scale: saveArea.containsMouse ? 1.12 : 1.0
+            Behavior on scale { NumberAnimation { duration: 120 } }
+            MouseArea { id: saveArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.saveTrack(trackRow.index) }
           }
           Text {
-            text: "+"; color: root.addTargetPlaylist ? root.accent : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall; font.bold: true
-            MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.addTrackToPlaylist(trackRow.index) }
+            text: "+"; color: root.addTargetPlaylist ? root.accent : (listArea.containsMouse ? root.ink : root.muted); font.family: root.iconFont; font.pixelSize: Style.font.bodySmall; font.bold: true
+            scale: listArea.containsMouse ? 1.12 : 1.0
+            Behavior on scale { NumberAnimation { duration: 120 } }
+            MouseArea { id: listArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.addTrackToPlaylist(trackRow.index) }
           }
           Text {
-            text: "󰇚"; color: root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
-            MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.downloadTrack(trackRow.index) }
+            text: "󰇚"; color: dlArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
+            scale: dlArea.containsMouse ? 1.12 : 1.0
+            Behavior on scale { NumberAnimation { duration: 120 } }
+            MouseArea { id: dlArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.downloadTrack(trackRow.index) }
           }
         }
       }
