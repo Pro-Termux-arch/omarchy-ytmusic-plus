@@ -27,8 +27,14 @@ BarWidget {
   property string vizPath: Qt.resolvedUrl("bin/ytviz").toString().replace("file://", "")
   property int vizFailCount: 0
   property double vizLastFailMs: 0
+  // Idle collapse: a track merely being loaded is not "using" the player, so
+  // the pill starts as its icon and only expands once you touch it (hover,
+  // click, or open). It then lingers for `collapseMs` after your last
+  // interaction before shrinking back to the icon. Bump to stay expanded longer.
+  property int collapseMs: 5000
+  property bool collapsed: true
 
-  implicitWidth: hasTrack ? Style.space(218) : Style.space(30)
+  implicitWidth: (hasTrack && !root.collapsed) ? Style.space(218) : Style.space(30)
   implicitHeight: barSize
 
   function applyViz(line) {
@@ -49,6 +55,7 @@ BarWidget {
 
   function open(payloadJson) {
     popupOpen = true
+    root.collapsed = false
     Qt.callLater(function() {
       if (popupPlayerLoader.item && popupPlayerLoader.item.open) popupPlayerLoader.item.open(payloadJson || "{}")
     })
@@ -57,6 +64,14 @@ BarWidget {
   function close(reason) {
     if (popupPlayerLoader.item && popupPlayerLoader.item.close) popupPlayerLoader.item.close()
     popupOpen = false
+    collapseTimer.restart()
+  }
+
+  // Any real interaction reveals the full pill and (re)starts the idle
+  // countdown that shrinks it back to an icon.
+  function poke() {
+    root.collapsed = false
+    collapseTimer.restart()
   }
 
   function toggle(payloadJson) {
@@ -120,6 +135,8 @@ BarWidget {
       anchors.fill: parent
       acceptedButtons: Qt.NoButton
       hoverEnabled: true
+      onEntered: root.poke()
+      onExited: collapseTimer.restart()
     }
 
     // Body click: anywhere on the pill that isn't a button opens the player.
@@ -127,12 +144,12 @@ BarWidget {
     MouseArea {
       anchors.fill: parent
       cursorShape: Qt.PointingHandCursor
-      onClicked: root.openPlayer()
+      onClicked: { root.poke(); root.openPlayer() }
     }
 
     Item {
       anchors.fill: parent
-      visible: !root.hasTrack
+      visible: !root.hasTrack || root.collapsed
 
       Text {
         anchors.centerIn: parent
@@ -147,7 +164,7 @@ BarWidget {
       anchors.fill: parent
       anchors.margins: Style.space(2)
       spacing: Style.space(3)
-      visible: root.hasTrack
+      visible: root.hasTrack && !root.collapsed
 
       Rectangle {
         width: parent.height
@@ -159,7 +176,7 @@ BarWidget {
         MouseArea {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.openPlayer()
+          onClicked: { root.poke(); root.openPlayer() }
         }
       }
 
@@ -174,7 +191,7 @@ BarWidget {
         MouseArea {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.openPlayer()
+          onClicked: { root.poke(); root.openPlayer() }
         }
       }
 
@@ -201,7 +218,7 @@ BarWidget {
           Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰒮"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
-        MouseArea { id: prevMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("previous") }
+        MouseArea { id: prevMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { root.poke(); root.runAction("previous") } }
       }
 
       Rectangle {
@@ -228,6 +245,7 @@ BarWidget {
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onClicked: {
+            root.poke()
             if (root.playerRunning) root.runAction("toggle")
             else root.openPlayer()
           }
@@ -250,7 +268,7 @@ BarWidget {
           Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰒭"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
-        MouseArea { id: nextMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
+        MouseArea { id: nextMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { root.poke(); root.runAction("next") } }
       }
     }
   }
@@ -324,6 +342,18 @@ BarWidget {
           vizProc.running = true
         }
       }
+    }
+  }
+
+  // Idle collapse countdown. Seeing the bar expand on track load isn't
+  // "using" the player, so it starts collapsed; poke() reveals + restarts this,
+  // and it never fires while you're hovering or the player popup is open.
+  Timer {
+    id: collapseTimer
+    interval: root.collapseMs
+    repeat: false
+    onTriggered: {
+      if (!root.popupOpen && !pillHover.containsMouse) root.collapsed = true
     }
   }
 
