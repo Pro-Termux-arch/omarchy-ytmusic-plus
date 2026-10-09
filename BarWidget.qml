@@ -41,7 +41,7 @@ BarWidget {
   property double lastActiveMs: 0
   property bool idleHidden: false
 
-  implicitWidth: (root.hasTrack && !root.idleHidden) ? Style.space(218) : Style.space(30)
+  implicitWidth: (root.hasTrack && !root.idleHidden) ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : Style.space(30)
   implicitHeight: barSize
   Behavior on implicitWidth { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
@@ -179,11 +179,13 @@ BarWidget {
 
     Row {
       id: pillRow
-      anchors.fill: parent
-      anchors.leftMargin: 0
-      anchors.topMargin: 0
-      anchors.bottomMargin: 0
-      anchors.rightMargin: Style.space(2)
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.leftMargin: Style.space(2)
+      anchors.topMargin: Style.space(2)
+      anchors.bottomMargin: Style.space(2)
+      width: childrenRect.width
       spacing: Style.space(3)
       visible: root.hasTrack && !root.idleHidden
       opacity: (root.hasTrack && !root.idleHidden) ? 1 : 0
@@ -220,7 +222,7 @@ BarWidget {
       }
 
       Marquee {
-        width: Math.max(Style.space(30), parent.width - parent.height - Style.space(64) - Style.space(20) - Style.space(22) - Style.space(20) - parent.spacing * 5 - Style.space(2))
+        width: Style.space(120)
         anchors.verticalCenter: parent.verticalCenter
         text: root.title
         textColor: root.foreground
