@@ -27,6 +27,36 @@ Privacy-first, login-free YouTube music player for the Omarchy bar.
 - **Themed**: every surface uses `Color.*` / `Style.*` tokens — theme switches
   repaint the player, nothing is hardcoded
 
+## Updates
+
+The Settings tab (dock gear) has an **Updates** group. It compares git SHAs —
+not version strings — so a phantom `v1.7.1` can never confuse it again: the
+status line shows the manifest version plus the short local SHA, and whether
+the upstream SHA differs.
+
+- **Check** runs `ytmusic-plus update-check` (read-only, 20 s timeouts). With
+  no `.git` checkout it says so and points at `omarchy plugin update`.
+- **Update now** (shown only when an update is available) runs
+  `ytmusic-plus update-apply`: `omarchy plugin update local.ytmusic-plus`,
+  then `omarchy-shell shell rescanPlugins` so the new UI hot-loads.
+- The `origin` remote must be
+  `github.com/Pro-Termux-arch/omarchy-ytmusic-plus` (https or ssh); anything
+  else is refused (anti-hijack, exit 2).
+- **Auto-apply updates** (default on) applies a background find automatically.
+  A background check runs on open when the last check is older than 24 h
+  (stored as `update_last_check` in settings: epoch seconds, or `off` to opt
+  out).
+- Neither command touches playback, queue, downloads, or settings beyond the
+  last-check stamp.
+
+## CLI extras
+
+- `ytmusic-plus song-link` — print the current track's share URL (direct
+  stream URL for radio/preview items, otherwise the YouTube `watch?v=` URL).
+  One line on stdout; exit 1 with `no track` when nothing is loaded.
+- `ytmusic-plus queue-clear` — stop playback and empty the queue (idempotent;
+  the counterpart to `queue JSON INDEX`).
+
 ## Dependencies
 
 `yt-dlp`, `mpv`, `socat`, `jq`, `curl` — all present on a standard Omarchy install.

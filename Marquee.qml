@@ -9,9 +9,11 @@ Item {
   property string textFont: "monospace"
   property int pixelSize: 11
   property bool bold: false
+  property bool hovered: false
   clip: true
 
   readonly property bool overflowing: mqText.implicitWidth > width
+  onOverflowingChanged: if (!mq.overflowing) mqText.x = 0
 
   Text {
     id: mqText
@@ -27,12 +29,14 @@ Item {
     opacity: 1.0
     Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
     onTextChanged: {
+      mqText.x = 0
       mqText.opacity = 0.3
       Qt.callLater(function() { mqText.opacity = 1.0 })
     }
 
     SequentialAnimation on x {
       running: mq.overflowing && mq.visible
+      paused: mq.hovered
       loops: Animation.Infinite
       PauseAnimation { duration: 1600 }
       NumberAnimation {
@@ -47,5 +51,12 @@ Item {
         easing.type: Easing.InOutSine
       }
     }
+  }
+
+  MouseArea {
+    anchors.fill: parent
+    acceptedButtons: Qt.NoButton
+    hoverEnabled: true
+    onContainsMouseChanged: mq.hovered = containsMouse
   }
 }

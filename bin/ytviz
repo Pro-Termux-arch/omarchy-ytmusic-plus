@@ -8,6 +8,7 @@
 import math
 import re
 import select
+import signal
 import struct
 import subprocess
 import sys
@@ -89,6 +90,15 @@ def goertzel(samples, coeff):
 
 
 def main():
+    # TERM must run the finally-cleanup below: default SIGTERM would kill us
+    # without reaping pw-record, orphaning it (viz-test `timeout -s TERM`
+    # leftovers). Raising SystemExit routes through finally -> kill + wait.
+    def _on_term(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, _on_term)
+    except Exception:
+        pass
     monitor = default_monitor()
     if not monitor:
         sys.stderr.write("ytviz: no monitor source found (pactl list short sources has no *.monitor)\n")
@@ -142,6 +152,17 @@ def main():
     except (BrokenPipeError, KeyboardInterrupt):
         pass
     finally:
+        # Close the pipe first so a blocked read/EOF resolves, then SIGKILL +
+        # reap. Second kill/wait covers the (rare) wait-timeout path so no
+        # zombie survives a TERM/INT.
+        try:
+            if rec.stdout:
+                try:
+                    rec.stdout.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         try:
             rec.kill()
         except Exception:
@@ -149,7 +170,14 @@ def main():
         try:
             rec.wait(timeout=2)
         except Exception:
-            pass
+            try:
+                rec.kill()
+            except Exception:
+                pass
+            try:
+                rec.wait(timeout=2)
+            except Exception:
+                pass
     if lines == 0:
         # pw-record died immediately (bad target) or yielded no frames:
         # silent success would leave callers idling on zero bars. Fail loudly

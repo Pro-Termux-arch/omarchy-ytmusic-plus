@@ -8,6 +8,13 @@ Rectangle {
   property var watched
   property string tipText: ""
   property int delayMs: 5000
+  // Crash-safe hover mirror: the null-guarded path below evaluates to the
+  // guard branch when watched is null or destroyed, so this binding never
+  // dereferences a dead object. That keeps us off the retargeting path
+  // where a one-off Quickshell SEGV was observed.
+  readonly property bool hovered: (tip.watched ? tip.watched.containsMouse : false) === true
+  property bool dwellOk: false
+  onHoveredChanged: if (!tip.hovered) tip.dwellOk = false
 
   width: tipLabel.width + Style.space(14)
   height: Style.space(22)
@@ -15,7 +22,7 @@ Rectangle {
   color: Color.tooltip.background
   border.width: 1
   border.color: Color.tooltip.border
-  visible: false
+  visible: tip.tipText !== "" && tip.hovered && tip.dwellOk
   z: 100
 
   anchors.bottom: parent.top
@@ -37,15 +44,8 @@ Rectangle {
 
   Timer {
     interval: tip.delayMs
-    running: tip.tipText !== "" && tip.watched && tip.watched.containsMouse
+    running: tip.tipText !== "" && tip.hovered && !tip.dwellOk
     repeat: false
-    onTriggered: tip.visible = true
-  }
-
-  Connections {
-    target: tip.watched
-    function onContainsMouseChanged() {
-      if (tip.watched && !tip.watched.containsMouse) tip.visible = false
-    }
+    onTriggered: tip.dwellOk = true
   }
 }

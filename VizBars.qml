@@ -10,10 +10,11 @@ Item {
   property color barColor: "#2ecc71"
   property color dimColor: "#3a3f4b"
 
-  implicitWidth: bars * 5
+  implicitWidth: Math.max(0, Math.min(32, bars)) * 5
   implicitHeight: 18
 
   function levelAt(i) {
+    if (!Array.isArray(viz.levels)) return 0
     var v = Number(viz.levels[i])
     if (!isFinite(v)) return 0
     return Math.max(0, Math.min(100, v))
@@ -25,7 +26,7 @@ Item {
     anchors.centerIn: parent
     spacing: 2
     Repeater {
-      model: viz.bars
+      model: Math.max(0, Math.min(32, viz.bars))
       Rectangle {
         width: 3
         height: viz.live
@@ -33,6 +34,7 @@ Item {
           : 2
         radius: 1.5
         color: viz.live ? viz.barColor : viz.dimColor
+        Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutCubic } }
         opacity: viz.live ? 0.55 + viz.levelAt(index) / 100 * 0.45 : 1.0
         anchors.verticalCenter: parent.verticalCenter
         Behavior on height { NumberAnimation { duration: 90 + index * 12; easing.type: Easing.OutCubic } }

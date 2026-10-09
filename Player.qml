@@ -24,7 +24,7 @@ Item {
   readonly property color raised: Style.normalFill
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.7 stable"
+  readonly property string appVersion: "v1.8 beta"
 
   property bool opened: false
   property bool searching: false
@@ -61,6 +61,15 @@ Item {
   property bool setMixAuto: true
   property int setSearchLimit: 12
   property string setDlQuality: "best"
+  property string updateStatusText: "Never checked - press Check"
+  property bool updateAvailable: false
+  property string updateLocalSha: ""
+  property string updateRemoteSha: ""
+  property string updateLocalVersion: ""
+  property bool updateAuto: true
+  property int updateLastCheck: 0
+  property bool updateChecking: false
+  property bool updateAutoChecked: false
   property string eqPresetName: "flat"
   property var eqGainsArr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   readonly property var eqBands: ["31", "62", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"]
@@ -69,8 +78,18 @@ Item {
   property string listTitle: ""
   property string errorMessage: ""
   property string notice: ""
+  // One status line shows notice || error: a fresh notice retires a stale
+  // error, and a fresh error preempts the notice + stops its timer.
+  onNoticeChanged: if (notice !== "") errorMessage = ""
+  onErrorMessageChanged: if (errorMessage !== "") {
+    notice = ""
+    noticeTimer.stop()
+  }
   property int selectedIndex: 0
   property int currentIndex: -1
+  // True only when the visible list IS the backend queue at the on-air row:
+  // keeps the played-row dim + queue position honest on foreign lists.
+  readonly property bool queueAligned: listMode === "queue" && currentIndex >= 0 && currentIndex < tracks.count && tracks.count > 0 && currentVideoId !== "" && tracks.get(currentIndex).videoId === currentVideoId
   property string currentTitle: ""
   property string currentArtist: ""
   property string currentThumbnail: ""
@@ -78,13 +97,13 @@ Item {
   property string currentVideoId: ""
   property bool currentSaved: false
   property bool currentDownloaded: false
-  property bool mixLoading: false
   property bool mixPrefetching: false
   property bool currentIsLive: false
   property bool playing: false
   property bool playerRunning: false
   property real position: 0
   property real playbackDuration: 0
+  property bool showRemaining: false // time labels: elapsed vs remaining
   property alias searchInput: searchField
   property var closeCallback: null
   property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
@@ -107,6 +126,7 @@ Item {
     opened = true
     errorMessage = ""
     notice = ""
+    updateAutoChecked = false
     refreshStatus()
     refreshMeta()
     loadSettings()
@@ -190,7 +210,9 @@ Item {
   }
 
   function reloadHome() {
-    if (homeProc.running) return
+    // Rapid genre/mode hops: remember to refetch with the LATEST tag instead
+    // of landing stale results for a previous one.
+    if (homeProc.running) { homeProc.refetch = true; return }
     homeLoading = true
     errorMessage = ""
     homeProc.collected = ""
@@ -305,7 +327,15 @@ Item {
   // `kind` tells onExited what the rows mean; the backend prints identical TSV
   // for search / mix / playlist-import / pl-show / lib-list, so one parser fits.
   function loadTsv(args, kind, title) {
-    if (searchProc.running) return
+    // A search already in flight: stash the newest request (latest wins) and
+    // run it when the current one lands - rapid typing never loses a query.
+    if (searchProc.running) {
+      searchProc.pendingArgs = args
+      searchProc.pendingKind = kind
+      searchProc.pendingTitle = title || ""
+      searchProc.hasPending = true
+      return
+    }
     searchProc.kind = kind
     searchProc.listTitle = title || ""
     searchProc.collected = ""
@@ -315,6 +345,15 @@ Item {
     selectedIndex = 0
     searchProc.command = ["bash", scriptPath].concat(args)
     searchProc.running = true
+  }
+
+  function flushSearchPending() {
+    if (!searchProc.hasPending || searchProc.running) return
+    var args = searchProc.pendingArgs
+    var kind = searchProc.pendingKind
+    var title = searchProc.pendingTitle
+    searchProc.hasPending = false
+    loadTsv(args, kind, title)
   }
 
   function search() {
@@ -360,7 +399,9 @@ Item {
   }
 
   function refreshMeta() {
-    if (!metaProc.running) {
+    if (metaProc.running) metaProc.refetch = true
+    else {
+      metaProc.refetch = false
       metaProc.collected = ""
       metaProc.command = ["bash", scriptPath, "pl-list"]
       metaProc.running = true
@@ -371,7 +412,8 @@ Item {
   function checkCurrentFlags() {
     // Shell-string below: only a strict videoId may enter (no metachars).
     if (!isVideoId(currentVideoId)) return
-    if (flagProc.running) return
+    // Track skipped mid-check: re-run for the new id when this one lands.
+    if (flagProc.running) { flagProc.retry = true; return }
     flagProc.collected = ""
     flagProc.command = ["bash", "-c",
       scriptPath + " lib-check " + currentVideoId + " >/dev/null 2>&1 && echo SAVED=1 || echo SAVED=0; " +
@@ -401,6 +443,7 @@ Item {
     loadTrackOffset()
     if (lyricsLoadedFor === currentVideoId || lyricsProc.running) return
     lyricsLoadedFor = currentVideoId
+    lyricsProc.reqId = currentVideoId
     lyrics.clear()
     currentLyricIndex = -1
     lyricLoading = true
@@ -419,7 +462,9 @@ Item {
   }
 
   function nudgeOffset(delta) {
-    if (!isVideoId(currentVideoId) || offsetProc.running) return
+    if (!isVideoId(currentVideoId)) return
+    // Rapid -/+ taps coalesce into one follow-up nudge instead of dropping.
+    if (offsetProc.running) { offsetProc.pendingDelta += delta; offsetProc.hasPending = true; return }
     offsetProc.mode = "nudge"
     offsetProc.collected = ""
     offsetProc.command = ["bash", scriptPath, "offset-nudge", currentVideoId, String(delta)]
@@ -427,7 +472,8 @@ Item {
   }
 
   function resetOffset() {
-    if (!isVideoId(currentVideoId) || offsetProc.running) return
+    if (!isVideoId(currentVideoId)) return
+    if (offsetProc.running) { offsetProc.pendingReset = true; return }
     offsetProc.mode = "reset"
     offsetProc.collected = ""
     offsetProc.command = ["bash", scriptPath, "offset-reset", currentVideoId]
@@ -737,7 +783,7 @@ Item {
 
   // ---- settings ---------------------------------------------------------------
   function loadSettings() {
-    if (settingsProc.running) return
+    if (settingsProc.running) { settingsProc.refetch = true; return }
     settingsProc.collected = ""
     settingsProc.command = ["bash", scriptPath, "settings"]
     settingsProc.running = true
@@ -757,6 +803,9 @@ Item {
       setDlQuality = s.dlQuality === "compact" ? "compact" : "best"
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
+      var ulc = s.update_last_check
+      if (typeof ulc === "string" && ulc === "off") { updateAuto = false }
+      else { updateAuto = true; var ulcNum = Math.floor(Number(ulc) || 0); updateLastCheck = ulcNum > 0 ? ulcNum : 0 }
       if (s.eqGains && s.eqGains.length === 10) {
         var g = []
         for (var i = 0; i < 10; i++) {
@@ -790,7 +839,9 @@ Item {
   }
 
   function installFont(url) {
-    var path = decodeURIComponent(String(url || "").replace(/^file:\/\//, ""))
+    var rawPath = String(url || "").replace(/^file:\/\//, "")
+    var path = rawPath
+    try { path = decodeURIComponent(rawPath) } catch (e) { path = rawPath }
     if (!path) return
     if (fontProc.running) return
     fontProc.collected = ""
@@ -815,7 +866,116 @@ Item {
     }
   }
 
+  // ---- self-update: SHA-compared, no version-string guessing ------------------
+  // update-check prints one UPDATE_CHECK line (short SHAs + manifest version);
+  // update-apply runs the plugin manager then rescans so the new QML loads.
+  // Dedicated processes only (never actionProc: an apply can take minutes and
+  // must never block playback/queue commands).
+  function checkUpdates(manual) {
+    if (updateCheckProc.running || updateApplyProc.running) return
+    updateChecking = true
+    if (manual) updateStatusText = "Checking for updates..."
+    updateCheckProc.collected = ""
+    updateCheckProc.manual = !!manual
+    updateCheckProc.command = ["bash", scriptPath, "update-check"]
+    updateCheckProc.running = true
+  }
+
+  function updateField(line, key) {
+    var parts = String(line || "").split(" ")
+    for (var i = 0; i < parts.length; i++) {
+      var kv = parts[i].split("=")
+      if (kv.length === 2 && kv[0] === key) return kv[1]
+    }
+    return ""
+  }
+
+  function recordUpdateCheck() {
+    if (!updateAuto) return
+    var now = Math.floor(Date.now() / 1000)
+    updateLastCheck = now
+    saveSetting("update_last_check", String(now))
+  }
+
+  function setUpdateAuto(on) {
+    updateAuto = on
+    if (on) {
+      var now = Math.floor(Date.now() / 1000)
+      updateLastCheck = now
+      saveSetting("update_last_check", String(now))
+    } else {
+      saveSetting("update_last_check", "off")
+    }
+  }
+
+  // Piggybacks the settings load (no new Timer): one background check per
+  // popup open when the last check is older than 24h. Waits for settings so a
+  // stored opt-out is honored before any auto-apply can fire.
+  function maybeAutoUpdateCheck() {
+    if (!opened || updateAutoChecked) return
+    updateAutoChecked = true
+    var now = Math.floor(Date.now() / 1000)
+    if ((now - (updateLastCheck || 0)) > 86400) checkUpdates(false)
+  }
+
+  function parseUpdateCheck(raw, code, errText) {
+    updateChecking = false
+    var errReason = String(errText || "").trim().split("\n")[0]
+    var lines = String(raw || "").split("\n")
+    var found = ""
+    var noGit = false
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i].trim()
+      if (ln.indexOf("UPDATE_CHECK ") === 0) found = ln
+      else if (ln.indexOf("git_checkout:false") === 0) noGit = true
+    }
+    if (found === "") {
+      updateAvailable = false
+      if (noGit) updateStatusText = "Not a git checkout - update via omarchy plugin update"
+      else updateStatusText = "Check failed: " + (errReason || ("exit " + code))
+      return
+    }
+    var avail = updateField(found, "available")
+    updateLocalVersion = updateField(found, "local_version")
+    updateLocalSha = updateField(found, "local_sha")
+    updateRemoteSha = updateField(found, "remote_sha")
+    if (avail !== "yes" && avail !== "no" && avail !== "unknown") {
+      updateAvailable = false
+      updateStatusText = "Check failed: bad response"
+      return
+    }
+    if (avail === "yes") {
+      updateAvailable = true
+      updateStatusText = "Update available (" + updateLocalSha + " -> " + updateRemoteSha + ")"
+      recordUpdateCheck()
+      if (!updateCheckProc.manual && updateAuto) applyUpdate()
+    } else if (avail === "no") {
+      updateAvailable = false
+      updateStatusText = "Up to date (v" + updateLocalVersion + " - " + updateLocalSha + ")"
+      recordUpdateCheck()
+    } else {
+      updateAvailable = false
+      updateStatusText = "Check failed: " + (errReason || "network unreachable")
+    }
+  }
+
+  function applyUpdate() {
+    if (updateApplyProc.running) return
+    updateApplyProc.collected = ""
+    updateApplyProc.command = ["bash", scriptPath, "update-apply"]
+    updateApplyProc.running = true
+    notice = "Updating..."
+    noticeTimer.restart()
+  }
+
   // ---- loop / shuffle / sleep ---------------------------------------------------
+  function nudgeVolume(delta) {
+    var v = Math.max(0, Math.min(100, Math.round((setVolume + delta) / 5) * 5))
+    setVolume = v
+    runCmd(["volume", String(v)])
+    saveSetting("volume", v)
+  }
+
   function cycleLoop() {
     loopMode = loopMode === "off" ? "all" : (loopMode === "all" ? "one" : "off")
     runCmd(["loop", loopMode])
@@ -888,8 +1048,10 @@ Item {
       var status = JSON.parse(String(raw || "{}"))
       playerRunning = status.running === true
       playing = playerRunning && status.paused !== true
-      position = Number(status.position) || 0
-      playbackDuration = Number(status.playbackDuration) || 0
+      var pos = Number(status.position)
+      position = (isFinite(pos) && pos > 0) ? pos : 0
+      var dur = Number(status.playbackDuration)
+      playbackDuration = (isFinite(dur) && dur > 0) ? dur : 0
       smoothPos = position
       lastStatusAt = Date.now()
       if (status.loop === "all" || status.loop === "one") loopMode = status.loop
@@ -917,7 +1079,10 @@ Item {
         }
       }
       if (status.isLive !== undefined) currentIsLive = status.isLive === true
-      if (status.index !== undefined) currentIndex = Number(status.index)
+      if (status.index !== undefined) {
+        var sIdx = Number(status.index)
+        if (isFinite(sIdx)) currentIndex = Math.max(-1, Math.floor(sIdx))
+      }
       if (status.queue && status.queue.length > 0 && tracks.count === 0 && !searching && listMode === "queue") {
         for (var i = 0; i < status.queue.length; i++) {
           var row = status.queue[i]
@@ -952,6 +1117,10 @@ Item {
     property string collected: ""
     property string kind: "search"
     property string listTitle: ""
+    property var pendingArgs: []
+    property string pendingKind: ""
+    property string pendingTitle: ""
+    property bool hasPending: false
     stdout: SplitParser { onRead: function(line) { searchProc.collected += line + "\n" } }
     stderr: StdioCollector { id: searchError; waitForEnd: true }
     onStarted: collected = ""
@@ -961,12 +1130,28 @@ Item {
         // dl-list prints the same track TSV as lib-list (with stored metadata).
         listMode = "downloads"
         listTitle = "Downloaded"
-        root.fillTracks(collected, 200)
-        if (tracks.count === 0) errorMessage = "No downloads yet — press ↓ on any track"
+        if (code === 0) root.fillTracks(collected, 200)
+        if (tracks.count === 0) {
+          var dlErr = searchError.text.trim().split("\n")[0]
+          errorMessage = (code !== 0 && dlErr) ? dlErr : "No downloads yet - press the download icon on any track"
+        }
+        root.flushSearchPending()
         return
       }
       if (code !== 0) {
         errorMessage = searchError.text.trim() || "Request failed (offline? throttled?)"
+        root.flushSearchPending()
+        return
+      }
+      if (kind === "queue") {
+        // Queue reload (post-shuffle): refill the real backend order instead
+        // of leaving the wiped list behind.
+        listMode = "queue"
+        listTitle = searchProc.listTitle || "Up next"
+        root.fillTracks(collected, 200)
+        if (tracks.count === 0) errorMessage = "Queue is empty - play something from Find"
+        else root.selectedIndex = (root.currentIndex >= 0 && root.currentIndex < tracks.count) ? root.currentIndex : 0
+        root.flushSearchPending()
         return
       }
       if (kind === "saved" || kind === "playlist" || kind === "search" || kind === "search-home") {
@@ -983,6 +1168,7 @@ Item {
           if (root.tabIndex !== 2) root.setTab(2)
         }
       }
+      root.flushSearchPending()
     }
   }
 
@@ -1023,23 +1209,79 @@ Item {
     id: offsetProc
     property string collected: ""
     property string mode: "get"
+    property real pendingDelta: 0
+    property bool hasPending: false
+    property bool pendingReset: false
     stdout: SplitParser { onRead: function(line) { offsetProc.collected += line + "\n" } }
     onStarted: collected = ""
     onExited: function(code) {
-      if (code !== 0) return
-      var v = parseFloat(String(collected || "").trim())
-      if (isFinite(v)) root.trackLyricOffset = Math.max(-10, Math.min(10, v))
-      root.updateLyricIndex()
+      if (code === 0) {
+        var v = parseFloat(String(collected || "").trim())
+        if (isFinite(v)) root.trackLyricOffset = Math.max(-10, Math.min(10, v))
+        root.updateLyricIndex()
+      }
+      // Reset wins over coalesced nudges; the reset's own exit flushes them.
+      if (offsetProc.pendingReset) { offsetProc.pendingReset = false; root.resetOffset(); return }
+      if (offsetProc.hasPending) {
+        var d = offsetProc.pendingDelta
+        offsetProc.pendingDelta = 0
+        offsetProc.hasPending = false
+        root.nudgeOffset(d)
+      }
     }
   }
 
   Process {
     id: settingsProc
     property string collected: ""
+    property bool refetch: false
     stdout: SplitParser { onRead: function(line) { settingsProc.collected += line + "\n" } }
     onStarted: collected = ""
     onExited: function(code) {
-      if (code === 0) root.applySettings(collected)
+      if (code === 0) { root.applySettings(collected); root.maybeAutoUpdateCheck() }
+      if (settingsProc.refetch) { settingsProc.refetch = false; root.loadSettings() }
+    }
+  }
+
+  // Self-update check: read-only SHA compare, never touches playback/queue.
+  Process {
+    id: updateCheckProc
+    property string collected: ""
+    property bool manual: false
+    stdout: SplitParser { onRead: function(line) { updateCheckProc.collected += line + "\n" } }
+    stderr: StdioCollector { id: updateCheckError; waitForEnd: true }
+    onStarted: collected = ""
+    onExited: function(code) {
+      root.parseUpdateCheck(collected, code, updateCheckError.text)
+    }
+  }
+
+  // Self-update apply: plugin manager update + rescan, result via notice.
+  Process {
+    id: updateApplyProc
+    property string collected: ""
+    stdout: SplitParser { onRead: function(line) { updateApplyProc.collected += line + "\n" } }
+    stderr: StdioCollector { id: updateApplyError; waitForEnd: true }
+    onStarted: collected = ""
+    onExited: function(code) {
+      if (code === 0) {
+        var sha = ""
+        var outLines = String(collected || "").split("\n")
+        for (var i = 0; i < outLines.length; i++) {
+          var parts = outLines[i].trim().split(" ")
+          if (parts.length >= 2 && parts[0] === "UPDATE_APPLIED") sha = parts[1]
+        }
+        root.updateAvailable = false
+        if (sha) {
+          root.updateLocalSha = sha
+          root.updateStatusText = "Up to date (v" + root.updateLocalVersion + " - " + sha + ")"
+        }
+        root.notice = "Updated to " + (sha || "latest") + " - UI reloaded"
+        root.noticeTimer.restart()
+      } else {
+        var reason = String(updateApplyError.text || "").trim().split("\n")[0] || ("exit " + code)
+        root.errorMessage = reason
+      }
     }
   }
 
@@ -1098,6 +1340,7 @@ Item {
   Process {
     id: homeProc
     property string collected: ""
+    property bool refetch: false
     stdout: SplitParser { onRead: function(line) { homeProc.collected += line + "\n" } }
     stderr: StdioCollector { id: homeError; waitForEnd: true }
     onStarted: collected = ""
@@ -1105,20 +1348,28 @@ Item {
       homeLoading = false
       if (code !== 0) {
         errorMessage = homeError.text.trim().split("\n")[0] || "Discovery failed"
-        return
+      } else {
+        root.fillHome(collected)
       }
-      root.fillHome(collected)
+      if (homeProc.refetch) { homeProc.refetch = false; root.reloadHome() }
     }
   }
 
   Process {
     id: lyricsProc
     property string collected: ""
+    property string reqId: ""
     stdout: SplitParser { onRead: function(line) { lyricsProc.collected += line + "\n" } }
     stderr: StdioCollector { id: lyricsError; waitForEnd: true }
     onStarted: collected = ""
     onExited: function(code) {
       lyricLoading = false
+      // Track changed mid-fetch: drop these lines, fetch the new song.
+      if (lyricsProc.reqId !== root.currentVideoId) {
+        root.lyricsLoadedFor = ""
+        if (root.tabIndex === 6) root.maybeLoadLyrics()
+        return
+      }
       if (code !== 0) {
         errorMessage = lyricsError.text.trim().split("\n")[0] || "Lyrics unavailable"
         return
@@ -1132,9 +1383,17 @@ Item {
   Process {
     id: metaProc
     property string collected: ""
+    property bool refetch: false
     stdout: SplitParser { onRead: function(line) { metaProc.collected += line + "\n" } }
     onStarted: collected = ""
     onExited: function(code) {
+      if (metaProc.refetch) {
+        metaProc.refetch = false
+        metaProc.collected = ""
+        metaProc.command = ["bash", scriptPath, "pl-list"]
+        metaProc.running = true
+        return
+      }
       if (code !== 0) return
       playlists.clear()
       var lines = String(collected || "").trim().split("\n")
@@ -1151,12 +1410,14 @@ Item {
   Process {
     id: flagProc
     property string collected: ""
+    property bool retry: false
     stdout: SplitParser { onRead: function(line) { flagProc.collected += line + "\n" } }
     onStarted: collected = ""
     onExited: function(code) {
       var t = String(collected || "")
       root.currentSaved = t.indexOf("SAVED=1") >= 0
       root.currentDownloaded = t.indexOf("DL=1") >= 0
+      if (flagProc.retry) { flagProc.retry = false; root.checkCurrentFlags() }
     }
   }
 
@@ -1435,8 +1696,13 @@ Item {
               height: parent.height
               radius: height / 2
               color: root.accent
+              opacity: importHover.pressed ? 0.8 : 1.0
+              transformOrigin: Item.Center
+              scale: importHover.pressed ? 0.95 : 1.0
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+              Behavior on opacity { NumberAnimation { duration: 120 } }
               Text { anchors.centerIn: parent; text: "Import"; color: root.onAccent; font.family: root.uiFont; font.pixelSize: Style.font.caption; font.bold: true }
-              MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.importPlaylist() }
+              MouseArea { id: importHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.importPlaylist() }
             }
           }
         }
@@ -1456,7 +1722,7 @@ Item {
               color: root.raised
               clip: true
               anchors.verticalCenter: parent.verticalCenter
-              Image { anchors.fill: parent; source: root.currentThumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true }
+              Image { anchors.fill: parent; source: root.currentThumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true; opacity: status === Image.Ready ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } } }
             }
             Column {
               width: parent.width - Style.space(46) - Style.space(96) - parent.spacing * 2
@@ -1542,7 +1808,18 @@ Item {
               width: parent.width
               height: Style.space(14)
               spacing: Style.space(7)
-              Text { width: Style.space(34); text: root.formatTime(root.position); color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+              Text {
+                id: elapsedLabel
+                width: Style.space(34)
+                text: root.showRemaining && root.playbackDuration > 0 ? ("-" + root.formatTime(root.playbackDuration - root.position)) : root.formatTime(root.position)
+                textFormat: Text.PlainText
+                color: root.muted
+                font.family: root.uiFont
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+                anchors.verticalCenter: parent.verticalCenter
+                MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.showRemaining = !root.showRemaining }
+              }
               Rectangle {
                 id: seekBar
                 width: Math.max(Style.space(40), parent.width - Style.space(34) * 2 - timeRow.spacing * 2)
@@ -1600,7 +1877,17 @@ Item {
                   }
                 }
               }
-              Text { width: Style.space(34); horizontalAlignment: Text.AlignRight; text: root.playbackDuration > 0 ? root.formatTime(root.playbackDuration) : root.durationLabel(root.currentDuration, root.currentIsLive); textFormat: Text.PlainText; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+              Text {
+                width: Style.space(34)
+                horizontalAlignment: Text.AlignRight
+                text: root.playbackDuration > 0 ? root.formatTime(root.playbackDuration) : root.durationLabel(root.currentDuration, root.currentIsLive)
+                textFormat: Text.PlainText
+                color: root.muted
+                font.family: root.uiFont
+                font.pixelSize: Style.font.caption
+                anchors.verticalCenter: parent.verticalCenter
+                MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.showRemaining = !root.showRemaining }
+              }
             }
             Item {
               width: parent.width
@@ -1644,13 +1931,50 @@ Item {
                   tapped: function() { root.cycleLoop() }
                 }
               }
+              Row {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(5)
+                Text {
+                  text: "-"
+                  color: volDown.containsMouse ? root.accent : root.muted
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                  anchors.verticalCenter: parent.verticalCenter
+                  Behavior on color { ColorAnimation { duration: 120 } }
+                  MouseArea { id: volDown; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(-5) }
+                  InfoTip { watched: volDown; tipText: "Quieter" }
+                }
+                Text {
+                  width: Style.space(30)
+                  horizontalAlignment: Text.AlignHCenter
+                  text: String(root.setVolume)
+                  textFormat: Text.PlainText
+                  color: root.muted
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  text: "+"
+                  color: volUp.containsMouse ? root.accent : root.muted
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                  anchors.verticalCenter: parent.verticalCenter
+                  Behavior on color { ColorAnimation { duration: 120 } }
+                  MouseArea { id: volUp; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(5) }
+                  InfoTip { watched: volUp; tipText: "Louder" }
+                }
+              }
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(2)
                 text: "󰀃"
                 visible: root.isVideoId(root.currentVideoId)
-                color: (root.mixLoading || root.mixPrefetching) ? root.accent : root.muted
+                color: root.mixPrefetching ? root.accent : root.muted
                 font.family: root.iconFont
                 font.pixelSize: Math.round(Style.font.iconLarge * 1.5)
                 MouseArea {
@@ -1675,7 +1999,7 @@ Item {
             text: {
               if (root.tabIndex === 0) return "Home · free discovery"
               if (root.tabIndex === 1) return root.searching ? "Searching YouTube…" : (tracks.count > 0 ? "Results" : "Search")
-              if (root.tabIndex === 2) return (root.mixPrefetching ? "Building mix… · " : "") + (root.listTitle || "Up next")
+              if (root.tabIndex === 2) return (root.mixPrefetching ? "Building mix… · " : "") + (root.listTitle || "Up next") + (root.queueAligned ? (" - " + Math.min(root.currentIndex + 1, tracks.count) + " of " + tracks.count) : "")
               if (root.tabIndex === 3) return root.openPlaylistName ? ("Playlist · " + root.openPlaylistName) : "My playlists"
               if (root.tabIndex === 4) return "Favourite"
               if (root.tabIndex === 5) return "Offline downloads (opus)"
@@ -1743,11 +2067,15 @@ Item {
               width: Style.space(70)
               height: parent.height
               radius: height / 2
-              color: "transparent"
+              color: createHover.containsMouse ? root.accent : "transparent"
               border.width: 1
               border.color: root.accent
-              Text { anchors.centerIn: parent; text: "+ Create"; color: root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption }
-              MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.createPlaylist() }
+              transformOrigin: Item.Center
+              scale: createHover.pressed ? 0.95 : 1.0
+              Behavior on color { ColorAnimation { duration: 120 } }
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+              Text { anchors.centerIn: parent; text: "+ Create"; color: createHover.containsMouse ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption; Behavior on color { ColorAnimation { duration: 120 } } }
+              MouseArea { id: createHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.createPlaylist() }
             }
             Rectangle {
               width: Style.space(62)
@@ -1757,6 +2085,7 @@ Item {
               border.width: 1
               border.color: root.accent
               opacity: root.openPlaylistName ? 1 : 0.4
+              enabled: root.openPlaylistName !== ""
               Text { anchors.centerIn: parent; text: "▶ Play"; color: root.openPlaylistName ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption }
               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.playPlaylist(root.openPlaylistName) }
             }
@@ -1848,6 +2177,8 @@ Item {
           width: parent.width
           height: visible ? parent.height - y - Style.space(18) : 0
           visible: root.tabIndex === 0
+          opacity: visible ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
           clip: true
 
           Column {
@@ -1988,6 +2319,14 @@ Item {
               clip: true
               spacing: Style.space(3)
               visible: homeModel.count > 0
+              opacity: visible ? 1 : 0
+              Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+              add: Transition {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 170; easing.type: Easing.OutCubic }
+                NumberAnimation { property: "x"; from: 14; to: 0; duration: 170; easing.type: Easing.OutCubic }
+              }
+              remove: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 130; easing.type: Easing.OutCubic } }
+              displaced: Transition { NumberAnimation { property: "y"; duration: 180; easing.type: Easing.OutCubic } }
               delegate: HomeRow { }
             }
 
@@ -2026,9 +2365,17 @@ Item {
           spacing: Style.space(3)
           currentIndex: root.selectedIndex
           visible: tracks.count > 0 && root.tabIndex !== 0 && root.tabIndex !== 6 && root.tabIndex !== 7
+          opacity: visible ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+          add: Transition {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 170; easing.type: Easing.OutCubic }
+            NumberAnimation { property: "x"; from: 14; to: 0; duration: 170; easing.type: Easing.OutCubic }
+          }
+          remove: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 130; easing.type: Easing.OutCubic } }
+          displaced: Transition { NumberAnimation { property: "y"; duration: 180; easing.type: Easing.OutCubic } }
           Keys.onPressed: function(event) {
             if (event.key === Qt.Key_Escape) { root.requestClose(); event.accepted = true }
-            else if (event.key === Qt.Key_Up) { root.selectedIndex = Math.max(0, root.selectedIndex - 1); event.accepted = true }
+            else if (event.key === Qt.Key_Up) { if (root.selectedIndex <= 0 && root.tabIndex === 1) root.searchInput.forceActiveFocus(); else root.selectedIndex = Math.max(0, root.selectedIndex - 1); event.accepted = true }
             else if (event.key === Qt.Key_Down) { root.selectedIndex = Math.min(tracks.count - 1, root.selectedIndex + 1); event.accepted = true }
             else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.selectTrack(root.selectedIndex); event.accepted = true }
           }
@@ -2040,6 +2387,8 @@ Item {
           width: parent.width
           height: visible ? parent.height - y - Style.space(18) : 0
           visible: root.tabIndex === 6
+          opacity: visible ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
           clip: true
 
           Column {
@@ -2168,6 +2517,8 @@ Item {
           width: parent.width
           height: visible ? parent.height - y - Style.space(18) : 0
           visible: root.tabIndex === 7
+          opacity: visible ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
           clip: true
 
           Flickable {
@@ -2446,6 +2797,46 @@ Item {
                 }
               }
 
+              Text { text: "Updates"; color: root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: true; topPadding: Style.space(8) }
+
+              Text {
+                width: parent.width
+                text: root.updateChecking ? "Checking for updates..." : root.updateStatusText
+                textFormat: Text.PlainText
+                color: root.muted
+                font.family: root.uiFont
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              SettingRow {
+                title: "Check for updates"
+                desc: "Compare local and upstream git SHAs"
+                control: SettingBtn {
+                  label: "Check"
+                  tapped: function() { root.checkUpdates(true) }
+                }
+              }
+
+              SettingRow {
+                visible: root.updateAvailable
+                title: "Update available"
+                desc: root.updateLocalSha + " -> " + root.updateRemoteSha
+                control: SettingBtn {
+                  label: "Update now"
+                  tapped: function() { root.applyUpdate() }
+                }
+              }
+
+              SettingRow {
+                title: "Auto-apply updates"
+                desc: "Apply when a background check finds one"
+                control: SettingToggle {
+                  on: root.updateAuto
+                  flipped: function() { root.setUpdateAuto(!root.updateAuto) }
+                }
+              }
+
               Text {
                 width: parent.width
                 text: "DSP toggles apply from the next track (mpv args are launch-time). Everything here is stored locally — nothing ever needs a login."
@@ -2463,12 +2854,16 @@ Item {
           width: parent.width
           height: visible ? parent.height - y - Style.space(18) : 0
           visible: tracks.count === 0 && !root.searching && root.tabIndex !== 0 && root.tabIndex !== 6 && root.tabIndex !== 7
+          textFormat: Text.PlainText
+          lineHeight: 1.35
+          opacity: visible ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
           text: {
-            if (root.tabIndex === 1) return "Search for something worth hearing"
-            if (root.tabIndex === 2) return "Queue is empty — play something from Find"
-            if (root.tabIndex === 3) return playlists.count > 0 ? "Pick a list, or import a YouTube playlist above" : "Create a list, or import a YouTube playlist above"
-            if (root.tabIndex === 4) return "Nothing loved yet — press ♥ on any track"
-            return "No downloads yet — press ↓ on any track"
+            if (root.tabIndex === 1) return "Search for something worth hearing\nResults build a mix station - no login needed"
+            if (root.tabIndex === 2) return "Queue is empty - play something from Find\nYour picks line up here"
+            if (root.tabIndex === 3) return playlists.count > 0 ? "Pick a list, or import a YouTube playlist above\nPaste a link in the import box to begin" : "Create a list, or import a YouTube playlist above\nUse + Create or paste a link above"
+            if (root.tabIndex === 4) return "Nothing loved yet - press the heart icon on any track\nSaved songs live here"
+            return "No downloads yet - press the download icon on any track\nOffline opus files are listed here"
           }
           color: root.muted
           font.family: root.uiFont
@@ -2833,7 +3228,7 @@ Item {
         color: root.raised
         clip: true
         anchors.verticalCenter: parent.verticalCenter
-        Image { anchors.fill: parent; source: homeRow.art; fillMode: Image.PreserveAspectCrop; asynchronous: true }
+        Image { anchors.fill: parent; source: homeRow.art; fillMode: Image.PreserveAspectCrop; asynchronous: true; opacity: status === Image.Ready ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } } }
         Text {
           anchors.centerIn: parent
           visible: homeRow.art === ""
@@ -2926,9 +3321,10 @@ Item {
     required property string url
     width: ListView.view ? ListView.view.width : 0
     height: Style.space(46)
-    opacity: (root.listMode === "queue" && root.currentIndex >= 0 && index < root.currentIndex) ? 0.45 : 1
+    opacity: (root.queueAligned && index < root.currentIndex) ? 0.45 : 1
     radius: Style.space(7)
     readonly property bool rowHovered: trackArea.containsMouse || mixArea.containsMouse || saveArea.containsMouse || listArea.containsMouse || dlArea.containsMouse
+    readonly property bool isCurrent: trackRow.videoId === root.currentVideoId
     color: index === root.selectedIndex ? root.raised : (rowHovered ? root.raised : "transparent")
 
     Row {
@@ -2945,14 +3341,14 @@ Item {
         color: root.raised
         clip: true
         anchors.verticalCenter: parent.verticalCenter
-        Image { anchors.fill: parent; source: trackRow.thumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true }
+        Image { anchors.fill: parent; source: trackRow.thumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true; opacity: status === Image.Ready ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } } }
       }
 
       Column {
         width: parent.width - Style.space(36) - Style.space(88) - Style.space(26) - Style.space(34) - parent.spacing * 3
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
-        Text { width: parent.width; text: trackRow.title; textFormat: Text.PlainText; color: trackRow.index === root.currentIndex ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.index === root.currentIndex; elide: Text.ElideRight }
+        Text { width: parent.width; text: trackRow.title; textFormat: Text.PlainText; color: trackRow.isCurrent ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.isCurrent; elide: Text.ElideRight }
         Text { width: parent.width; text: trackRow.artist; textFormat: Text.PlainText; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
       }
 
@@ -3000,7 +3396,7 @@ Item {
         width: Style.space(22)
         height: parent.height
         anchors.verticalCenter: parent.verticalCenter
-        visible: trackRow.index === root.currentIndex && root.playerRunning
+        visible: trackRow.isCurrent && root.playerRunning
         barColor: root.accent
         active: visible && root.playing
       }

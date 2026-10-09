@@ -8,9 +8,11 @@ Item {
   property color barColor: Color.accent
   property int bars: 4
   property bool active: true
+  opacity: wb.active ? 1 : 0.35
 
-  implicitWidth: bars * 5
+  implicitWidth: Math.max(0, Math.min(12, bars)) * 5
   implicitHeight: 14
+  Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
   Row {
     anchors.centerIn: parent

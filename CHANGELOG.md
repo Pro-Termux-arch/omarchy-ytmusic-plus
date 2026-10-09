@@ -1,11 +1,38 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **6** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable)
+Updates so far: **7** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.7 stable (current)
+## v1.8 beta (current)
+
+- Idle auto-collapse: the bar pill collapses to its icon 60s after playback
+  stops (display-only — resume re-expands instantly, no new timers)
+- Skip-silence fix: end-trim (`stop_periods`) was cutting songs at the first
+  mid-track silence (skips + restarts) — now lead-in trim only
+- Self-updater: SHA-precise `update-check`/`update-apply` backend commands
+  (anti-hijack origin check) + Settings UI with 24h auto-check and opt-out
+- Deep bug sweep: corrupt runtime files self-heal (no more wedged empty
+  output), empty-queue stop cleans up properly, queue/shuffle/lib-save/sleep
+  paths hardened against malformed input, queue view reloads after shuffle,
+  dropped proc requests retry latest-wins, track-change lyric race fixed,
+  correct per-list "on air" highlight, stale notice/error lines fixed,
+  deferred popup-open race fixed, marquee offset reset on title change
+- New: `song-link` (share URL) + `queue-clear` commands; elapsed/remaining
+  time toggle; live volume stepper; queue position ("3 of 12"); richer empty
+  states; import/create pills behave like real buttons
+- Motion: list add/remove/displaced transitions, thumbnail fade-ins, tab
+  crossfades, collapse/expand glide, staggered bar-button glows, marquee
+  pause-on-hover, press ripples everywhere
+- Lighter: mpv demuxer cache 50M→24M (still ~12 min of audio buffered);
+  InfoTip rewritten binding-only (no Connections — removes the layer where a
+  one-off shell SEGV was observed); no lingering helper processes
+- Security: `dl-get` shell-string mover removed, mirror/curl flag-injection
+  + size caps, cache disk-fill cap (200 MB), stream-cache atomicity, font
+  validation tightened, ytviz SIGTERM orphan fixed, full remote-data re-audit
+
+## v1.7 stable
 
 - Track-row hover buttons no longer vanish under the cursor: new `rowHovered`
   state covers the row plus all four action buttons (Qt gives hover only to

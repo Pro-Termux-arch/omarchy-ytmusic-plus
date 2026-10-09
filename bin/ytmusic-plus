@@ -48,6 +48,15 @@ chmod 700 -- "$RUNTIME_DIR" 2>/dev/null || true
 [[ -e "$LIB_FILE" ]] || printf '[]\n' >"$LIB_FILE"
 [[ -e "$DL_META" ]] || printf '{}' >"$DL_META"
 [[ -e "$OFFSETS_FILE" ]] || printf '{}' >"$OFFSETS_FILE"
+# Self-heal torn runtime files (crash mid-write): a corrupt queue/state must
+# never wedge status/next/shuffle into jq-error crashes with no stdout.
+# Runtime only — data files (library/downloads/settings) are never auto-reset.
+if ! jq -e 'type == "array"' "$QUEUE_FILE" >/dev/null 2>&1; then
+  printf '[]\n' >"$QUEUE_FILE" 2>/dev/null || true
+fi
+if [[ -e "$STATE_FILE" ]] && ! jq -e 'type == "object"' "$STATE_FILE" >/dev/null 2>&1; then
+  rm -f -- "$STATE_FILE" 2>/dev/null || true
+fi
 
 # Atomic state write: jq on empty/corrupt input exits 0 with NO output, so an
 # unguarded `>tmp && mv` truncates state files to zero bytes. commit() never
@@ -60,7 +69,7 @@ commit() {
 # (including 450ms status polls), so it must NEVER rewrite the file when all
 # keys are present — an unconditional rewrite raced with `set` and silently
 # reverted the user's change within a second (the "settings don't stick" bug).
-SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":""}'
+SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0}'
 if [[ -e "$SETTINGS_FILE" ]]; then
   if ! jq -e --argjson d "$SETTINGS_DEFAULTS" '($d | keys_unsorted) - (keys_unsorted) | length == 0' "$SETTINGS_FILE" >/dev/null 2>&1; then
     tmp_s="$RUNTIME_DIR/settings.merge.tmp"
@@ -101,10 +110,27 @@ dur_to_sec() {
   printf '%d' $(( 10#$h * 3600 + 10#$m * 60 + 10#$s ))
 }
 
-# Delete cache files older than 30 days (lyrics TTL). Called from
-# user-initiated fetches so caches stay bounded without hot-path I/O.
+# Delete cache files older than 30 days (lyrics TTL) + enforce a 200MB size cap
+# (oldest first). Called from user-initiated fetches so caches stay bounded
+# without hot-path I/O.
 prune_cache() {
+  [[ "$CACHE_DIR" == */omarchy-ytmusic-plus && "$CACHE_DIR" != "/" ]] || return 0
   find "$CACHE_DIR" -type f -mtime +30 -delete 2>/dev/null || true
+  local cap=$(( 200 * 1024 * 1024 )) total oldest f
+  total="$(du -sb -- "$CACHE_DIR" 2>/dev/null | cut -f1 || printf 0)"
+  [[ "$total" =~ ^[0-9]+$ ]] || return 0
+  (( total <= cap )) && return 0
+  while (( total > cap )); do
+    oldest="$(find "$CACHE_DIR" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -n 20 | cut -d' ' -f2- || true)"
+    [[ -n "$oldest" ]] || break
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      rm -f -- "$f" 2>/dev/null || true
+    done <<<"$oldest"
+    total="$(du -sb -- "$CACHE_DIR" 2>/dev/null | cut -f1 || printf 0)"
+    [[ "$total" =~ ^[0-9]+$ ]] || break
+  done
+  return 0
 }
 
 # Public Invidious + Piped mirrors used ONLY as metadata fallbacks when yt-dlp
@@ -181,8 +207,11 @@ resolve_playable() {
   if [[ -s "$cache" ]]; then
     age=$(( now - $(stat -c %Y "$cache" 2>/dev/null || printf 0) ))
     if (( age < STREAM_CACHE_TTL )); then
-      url="$(head -c 4096 "$cache" | tr -d '\n')"
-      [[ -n "$url" ]] && { printf '%s\n' "$url"; return 0; }
+      # Size-guard before slurp: a hand-planted huge cache file must not OOM us.
+      if [[ "$(stat -c%s -- "$cache" 2>/dev/null || printf 0)" -le 8192 ]]; then
+        url="$(tr -d '\n' <"$cache" 2>/dev/null || true)"
+        [[ "$url" == https://* ]] && { printf '%s\n' "$url"; return 0; }
+      fi
     fi
   fi
   require yt-dlp
@@ -191,8 +220,8 @@ resolve_playable() {
     url="$(yt-dlp "${base[@]}" --no-playlist --skip-download --format 'bestaudio/best' \
       --extractor-args "youtube:player_client=$client" \
       --print '%(url)s' "https://www.youtube.com/watch?v=$vid" 2>/dev/null | head -n1 || true)"
-    if [[ -n "$url" && "$url" != "NA" ]]; then
-      printf '%s' "$url" >"$cache"
+    if [[ "$url" == https://* && "$url" != "NA" ]]; then
+      printf '%s' "$url" >"$cache.tmp" 2>/dev/null && [[ -s "$cache.tmp" ]] && mv -- "$cache.tmp" "$cache" || rm -f -- "$cache.tmp"
       printf '%s\n' "$url"
       return 0
     fi
@@ -220,13 +249,17 @@ eq_preset_gains() {
 
 # Fills global DSP_ARGS (+VOL, +LOOP_ONE) from settings. Silence trim, loudness
 # normalize and the 10-band EQ are launch-time mpv args, so toggles apply from
-# the next track. Zero EQ bands are skipped so flat costs nothing.
+# the next track. Zero EQ bands are skipped so flat costs nothing. The silence
+# trim is lead-in only (no stop_periods): end-trim truncates the stream at the
+# FIRST sub-floor silence anywhere, dropping mid-song breaks, quiet verses and
+# everything after them, which mpv reports as an early EOF.
 build_dsp_args() {
   DSP_ARGS=()
-  VOL="$(sget volume)"; [[ "$VOL" =~ ^[0-9]+$ ]] || VOL=70
+  VOL="$(sget volume 2>/dev/null || printf 70)"; [[ "$VOL" =~ ^[0-9]+$ ]] || VOL=70
+  (( VOL >= 0 && VOL <= 100 )) || VOL=70
   LOOP_ONE="false"; [[ "$(sget loop)" == one ]] && LOOP_ONE="true"
   if [[ "$(sget silence)" == on ]]; then
-    DSP_ARGS+=(--af-append='silenceremove=start_periods=1:start_duration=0.3:start_threshold=-50dB:stop_periods=1:stop_duration=0.5:stop_threshold=-50dB')
+    DSP_ARGS+=(--af-append='silenceremove=start_periods=1:start_duration=0.3:start_threshold=-50dB')
   fi
   if [[ "$(sget normalize)" == on ]]; then
     DSP_ARGS+=(--af-append='dynaudnorm=f=150:g=7')
@@ -264,7 +297,7 @@ launch_id() {
       "${DSP_ARGS[@]}" --volume="$VOL" --title='YTMusic Plus' "$target" 9>&- >/dev/null 2>&1 &
   else
     mpv --no-video --force-window=no --input-ipc-server="$SOCKET" \
-      --ytdl=no --cache=yes --demuxer-max-bytes=50M \
+      --ytdl=no --cache=yes --demuxer-max-bytes=24M \
       "${DSP_ARGS[@]}" --volume="$VOL" --title='YTMusic Plus' "$target" 9>&- >/dev/null 2>&1 &
   fi
   local mpv_pid=$!
@@ -276,7 +309,7 @@ watch_track() {
   local mpv_pid="$1"
   (
     exec 9>&-
-    local started played current count index streak
+    local started played current count index streak streak_raw
     started="$(date +%s)"
     while is_our_mpv "$mpv_pid"; do sleep 1; done
     played=$(( $(date +%s) - started ))
@@ -290,14 +323,18 @@ watch_track() {
     # cap consecutive skips at 3 so a poisoned queue stops instead of racing
     # through 40 tracks in seconds. A proper listen resets the counter.
     if (( played < 10 )); then
-      streak=$(( $(cat "$FAIL_FILE" 2>/dev/null || printf 0) + 1 ))
+      streak_raw="$(cat "$FAIL_FILE" 2>/dev/null || printf 0)"
+      [[ "$streak_raw" =~ ^[0-9]+$ ]] || streak_raw=0
+      streak=$(( streak_raw + 1 ))
       if (( streak >= 3 )); then rm -f -- "$FAIL_FILE"; exit 0; fi
       printf '%s\n' "$streak" >"$FAIL_FILE"
     else
       rm -f -- "$FAIL_FILE"
     fi
     count="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
-    index="$(jq -r '.index // -1' "$STATE_FILE" 2>/dev/null || printf -- -1)"
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    index="$(jq -r '.index // -1' "$STATE_FILE" 2>/dev/null || printf '%s' -1)"
+    [[ "$index" =~ ^-?[0-9]+$ ]] || index=-1
     # Sleep "end of song" fires exactly here: a natural track end with the
     # mode armed. Quick-death skips above already filtered out unplayable
     # tracks, and manual skips never reach this path (pid mismatch exits).
@@ -323,10 +360,10 @@ watch_track() {
 launch_stream() {
   local url="$1"
   require mpv
-  [[ "$url" == http* ]] || return 2
+  [[ "$url" == http://* || "$url" == https://* ]] || return 2
   build_dsp_args
   local -a args=(--no-video --force-window=no --input-ipc-server="$SOCKET"
-    --ytdl=no --cache=yes --demuxer-max-bytes=50M --volume="$VOL" --title='YTMusic Plus')
+    --ytdl=no --cache=yes --demuxer-max-bytes=24M --volume="$VOL" --title='YTMusic Plus')
   args+=("${DSP_ARGS[@]}")
   kill_old_mpv
   mpv "${args[@]}" "$url" 9>&- >/dev/null 2>&1 &
@@ -340,18 +377,25 @@ start_index() {
   # unresolvable queue (offline/throttled) recursed forever, wrapping the
   # queue indefinitely and spawning unbounded yt-dlp runs.
   local index="$1" count track vid url state_tmp target _tries="${2:-0}"
-  count="$(jq 'length' "$QUEUE_FILE")"
-  (( count > 0 )) || exit 0
+  count="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  # Empty queue: stop stale playback instead of going silent on a dead index.
+  if (( count == 0 )); then
+    kill_old_mpv 2>/dev/null || true
+    rm -f -- "$FAIL_FILE" "$STATE_FILE"
+    exit 0
+  fi
   index=$(( (index % count + count) % count ))
-  track="$(jq -c ".[$index]" "$QUEUE_FILE")"
-  vid="$(jq -r '.videoId' <<<"$track")"
+  track="$(jq -c ".[$index]" "$QUEUE_FILE" 2>/dev/null || printf '')"
+  [[ -n "$track" && "$track" != null ]] || exit 1
+  vid="$(jq -r '.videoId // ""' <<<"$track" 2>/dev/null || printf '')"
   valid_id "$vid" || exit 2
   # Queue entries may carry a direct stream url (radio, previews): play it
   # without any YouTube resolving.
-  url="$(jq -r '.url // ""' <<<"$track")"
-  if [[ -n "$url" ]]; then
+  url="$(jq -r '.url // ""' <<<"$track" 2>/dev/null || printf '')"
+  if [[ "$url" == http://* || "$url" == https://* ]]; then
     state_tmp="$RUNTIME_DIR/state.json.tmp"
-    jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp"
+    jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp" 2>/dev/null || return 1
     [[ -s "$state_tmp" ]] || return 1
     mv -- "$state_tmp" "$STATE_FILE"
     launch_stream "$url"
@@ -368,7 +412,7 @@ start_index() {
     exit 1
   fi
   state_tmp="$RUNTIME_DIR/state.json.tmp"
-  jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp"
+  jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp" 2>/dev/null || return 1
   [[ -s "$state_tmp" ]] || return 1
   mv -- "$state_tmp" "$STATE_FILE"
   launch_id "$vid"
@@ -378,9 +422,11 @@ start_index() {
 # a new timer (or off) bumps the generation, old sleepers wake, see the
 # mismatch and exit without touching playback.
 arm_sleep() {
-  local secs="$1" mode="$2" gen now
+  local secs="$1" mode="$2" gen gen_raw now
   now="$(date +%s)"
-  gen=$(( $(cat "$RUNTIME_DIR/sleep_gen" 2>/dev/null || printf 0) + 1 ))
+  gen_raw="$(cat "$RUNTIME_DIR/sleep_gen" 2>/dev/null || printf 0)"
+  [[ "$gen_raw" =~ ^[0-9]+$ ]] || gen_raw=0
+  gen=$(( gen_raw + 1 ))
   printf '%s' "$gen" >"$RUNTIME_DIR/sleep_gen"
   if [[ "$mode" == off ]]; then
     rm -f -- "$SLEEP_FILE" "$SLEEP_MODE_FILE"
@@ -395,18 +441,23 @@ arm_sleep() {
     rm -f -- "$SLEEP_FILE"
     printf 'sleep at end of song\n'
   else
+    [[ "$secs" =~ ^[0-9]+$ ]] || { printf 'bad sleep duration\n' >&2; return 2; }
+    (( secs >= 60 && secs <= 28800 )) || { printf 'bad sleep duration\n' >&2; return 2; }
     printf '%s' "$(( now + secs ))" >"$SLEEP_FILE"
     printf 'timer' >"$SLEEP_MODE_FILE"
     printf 'sleep in %s min\n' "$(( secs / 60 ))"
   fi
   if [[ "$mode" == timer ]]; then
   (
+    local sleep_until
     exec 9>&-
     sleep "$secs"
     exec 9>"$RUNTIME_DIR/launch.lock"; flock 9
     [[ "$(cat "$RUNTIME_DIR/sleep_gen" 2>/dev/null || printf 0)" == "$gen" ]] || exit 0
     [[ -f "$SLEEP_FILE" ]] || exit 0
-    (( $(date +%s) >= $(<"$SLEEP_FILE") )) || exit 0
+    sleep_until="$(cat "$SLEEP_FILE" 2>/dev/null || printf 0)"
+    [[ "$sleep_until" =~ ^[0-9]+$ ]] || exit 0
+    (( $(date +%s) >= sleep_until )) || exit 0
     kill_old_mpv
     rm -f -- "$SLEEP_FILE" "$SLEEP_MODE_FILE"
   ) >/dev/null 2>&1 &
@@ -426,15 +477,17 @@ ytdlp_search() {
 }
 
 invidious_search() {
-  local query="$1" limit="$2" inst json
+  local query="$1" limit="$2" inst json rows
+  [[ "$limit" =~ ^(8|12|20)$ ]] || limit=12
   require curl; require jq
   for inst in $INVIDIOUS_INSTANCES; do
-    json="$(curl -sS -m "$CONNECT_TIMEOUT" -G --data-urlencode "q=$query" \
+    [[ "$inst" == https://* ]] || continue
+    json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 5M -G --data-urlencode "q=$query" \
       --data-urlencode "type=video" --data-urlencode "page=1" \
-      "$inst/api/v1/search" 2>/dev/null || true)"
+      -- "$inst/api/v1/search" 2>/dev/null || true)"
     [[ -n "$json" ]] || continue
     if jq -e 'type == "array"' <<<"$json" >/dev/null 2>&1; then
-      jq -r --argjson n "$limit" '
+      rows="$(jq -r --argjson n "$limit" '
         def pad: if . < 10 then "0\(.)" else "\(.)" end;
         [ .[] | select(.type == "video" and (.videoId|test("^[A-Za-z0-9_-]{11}$")))
         | ((.lengthSeconds // 0 | tonumber) as $d
@@ -446,7 +499,9 @@ invidious_search() {
               (((.videoThumbnails // []) | map(select(.url)) | sort_by(.width) | last | .url) // ""),
               (if (.liveNow // false) then "is_live" else "not_live" end)
             ] | @tsv)
-        ] | .[0:$n] | .[]' <<<"$json" 2>/dev/null | head -n "$limit"
+        ] | .[0:$n] | .[]' <<<"$json" 2>/dev/null | head -n "$limit" || true)"
+      [[ -n "$rows" ]] || continue
+      printf '%s' "$rows"
       return 0
     fi
   done
@@ -454,14 +509,16 @@ invidious_search() {
 }
 
 piped_search() {
-  local query="$1" limit="$2" inst json
+  local query="$1" limit="$2" inst json rows
+  [[ "$limit" =~ ^(8|12|20)$ ]] || limit=12
   require curl; require jq
   for inst in $PIPED_INSTANCES; do
-    json="$(curl -sS -m "$CONNECT_TIMEOUT" -G --data-urlencode "q=$query" \
-      --data-urlencode "filter=videos" "$inst/search" 2>/dev/null || true)"
+    [[ "$inst" == https://* ]] || continue
+    json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 5M -G --data-urlencode "q=$query" \
+      --data-urlencode "filter=videos" -- "$inst/search" 2>/dev/null || true)"
     [[ -n "$json" ]] || continue
     if jq -e '.items | type == "array"' <<<"$json" >/dev/null 2>&1; then
-      jq -r --argjson n "$limit" '
+      rows="$(jq -r --argjson n "$limit" '
         def pad: if . < 10 then "0\(.)" else "\(.)" end;
         .items | map(select((.url // "") | test("/watch\\?v=[A-Za-z0-9_-]{11}")))
         | .[0:$n] | .[]
@@ -473,7 +530,9 @@ piped_search() {
           | [ ((.url // "") | capture("v=(?<v>[A-Za-z0-9_-]{11})") | .v),
               (.title // "Untitled"), (.uploaderName // "YouTube"), $dur,
               (.thumbnail // ""), "not_live"
-            ] | @tsv)' <<<"$json" 2>/dev/null | head -n "$limit"
+            ] | @tsv)' <<<"$json" 2>/dev/null | head -n "$limit" || true)"
+      [[ -n "$rows" ]] || continue
+      printf '%s' "$rows"
       return 0
     fi
   done
@@ -511,9 +570,50 @@ ytdlp_playlist() {
     -- "$url" 2>/dev/null
 }
 
+# ---- self-update: SHA-compared, anti-hijack ----------------------------------
+# Eliminates version-string confusion (v1.7 vs phantom v1.7.1): both ends show
+# the manifest version plus short git SHAs, and availability compares FULL
+# SHAs. update-check is read-only (never writes state/queue/settings/mpv);
+# update-apply delegates to the plugin manager and never deletes anything.
+UPDATE_UPSTREAM="github.com/Pro-Termux-arch/omarchy-ytmusic-plus"
+UPDATE_TIMEOUT_SHORT=20
+UPDATE_TIMEOUT_LONG=180
+
+# Prints the plugin dir (parent of bin/ holding this script). Never fails.
+update_plugin_dir() {
+  local src bin_dir
+  src="$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")"
+  bin_dir="$(dirname -- "$src")"
+  dirname -- "$bin_dir"
+}
+
+# Verify origin points at our upstream (https + ssh forms allowed).
+# Prints the url, returns 0 when trusted; 1 on mismatch (caller refuses with
+# stderr + exit 2); 2 when unverifiable (no git binary / no origin remote).
+update_origin_url() {
+  local dir="$1" url=""
+  command -v git >/dev/null 2>&1 || return 2
+  url="$(git -C "$dir" remote get-url origin 2>/dev/null)" || return 2
+  [[ -n "$url" ]] || return 2
+  if [[ "$url" =~ ^https://github\.com/Pro-Termux-arch/omarchy-ytmusic-plus(\.git)?/?$ ]]; then printf '%s\n' "$url"; return 0; fi
+  if [[ "$url" =~ ^git@github\.com:Pro-Termux-arch/omarchy-ytmusic-plus(\.git)?/?$ ]]; then printf '%s\n' "$url"; return 0; fi
+  if [[ "$url" =~ ^ssh://git@github\.com/Pro-Termux-arch/omarchy-ytmusic-plus(\.git)?/?$ ]]; then printf '%s\n' "$url"; return 0; fi
+  return 1
+}
+
+# Manifest version for display; "unknown" when unreadable (never fails).
+update_manifest_version() {
+  local dir="$1" v=""
+  if command -v jq >/dev/null 2>&1; then
+    v="$(jq -r '.version // empty' "$dir/manifest.json" 2>/dev/null || true)"
+  fi
+  [[ -n "$v" ]] || v="unknown"
+  printf '%s\n' "$v"
+}
+
 # Serialize playback mutations under one exclusive lock; status takes shared.
 case "${1:-}" in
-  queue|requeue|play|next|previous|stop|lib-save|lib-unsave|pl-create|pl-add|pl-remove|pl-delete|dl-get|dl-remove|set|loop|shuffle|sleep|offset-nudge|offset-reset|font-install|font-reset)
+  queue|queue-clear|requeue|play|next|previous|stop|lib-save|lib-unsave|pl-create|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-remove|set|loop|shuffle|sleep|offset-nudge|offset-reset|font-install|font-reset)
     require flock
     exec 9>"$RUNTIME_DIR/launch.lock"
     flock 9
@@ -525,7 +625,7 @@ case "${1:-}" in
     ;;
 esac
 case "${1:-}" in
-  queue|play|next|previous|stop) rm -f -- "$FAIL_FILE" ;;
+  queue|queue-clear|play|next|previous|stop|pl-play) rm -f -- "$FAIL_FILE" ;;
 esac
 
 case "${1:-}" in
@@ -590,8 +690,8 @@ case "${1:-}" in
     index="${3:-0}"
     [[ "$index" =~ ^[0-9]+$ ]] || exit 2
     queue_tmp="$RUNTIME_DIR/queue.json.tmp"
-    jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp"
-    [[ -s "$queue_tmp" ]] || exit 1
+    jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp" 2>/dev/null || { rm -f -- "$queue_tmp"; exit 1; }
+    [[ -s "$queue_tmp" ]] || { rm -f -- "$queue_tmp"; exit 1; }
     mv -- "$queue_tmp" "$QUEUE_FILE"
     start_index "$index"
     ;;
@@ -606,13 +706,13 @@ case "${1:-}" in
       [[ "$current_seed" == "$expected_seed" ]] || exit 0
     fi
     queue_tmp="$RUNTIME_DIR/queue.json.tmp"
-    jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp"
-    [[ -s "$queue_tmp" ]] || exit 1
+    jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp" 2>/dev/null || { rm -f -- "$queue_tmp"; exit 1; }
+    [[ -s "$queue_tmp" ]] || { rm -f -- "$queue_tmp"; exit 1; }
     mv -- "$queue_tmp" "$QUEUE_FILE"
     if [[ -s "$STATE_FILE" ]]; then
       state_tmp="$RUNTIME_DIR/state.json.tmp"
-      jq -c --argjson index "$index" '. + {index: $index}' "$STATE_FILE" >"$state_tmp"
-      [[ -s "$state_tmp" ]] || exit 1
+      jq -c --argjson index "$index" '. + {index: $index}' "$STATE_FILE" >"$state_tmp" 2>/dev/null || { rm -f -- "$state_tmp"; exit 1; }
+      [[ -s "$state_tmp" ]] || { rm -f -- "$state_tmp"; exit 1; }
       mv -- "$state_tmp" "$STATE_FILE"
     fi
     ;;
@@ -677,7 +777,7 @@ case "${1:-}" in
   seek)
     require socat
     seconds="${2:-0}"
-    [[ "$seconds" =~ ^-?[0-9]+$ ]] || exit 2
+    [[ "$seconds" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || exit 2
     ipc "{\"command\":[\"seek\",$seconds,\"relative\"]}" >/dev/null
     ;;
   volume)
@@ -759,20 +859,22 @@ case "${1:-}" in
   # ---- saves: library (liked tracks) --------------------------------------
   lib-save)
     require jq
-    vid="${2:-}"; [[ -n "$vid" ]] || vid="$(jq -r '.videoId // ""' "$STATE_FILE" 2>/dev/null)"
+    vid="${2:-}"; [[ -n "$vid" ]] || vid="$(jq -r '.videoId // ""' "$STATE_FILE" 2>/dev/null || printf '')"
     valid_id "$vid" || exit 2
     title="${3:-}"; artist="${4:-}"; thumb="${5:-}"; dur="${6:-}"; live="${7:-false}"
     if [[ -z "$title" ]]; then
-      title="$(jq -r '.title // "Untitled"' "$STATE_FILE" 2>/dev/null)"
-      artist="$(jq -r '.artist // "YouTube"' "$STATE_FILE" 2>/dev/null)"
-      thumb="$(jq -r '.thumbnail // ""' "$STATE_FILE" 2>/dev/null)"
-      dur="$(jq -r '.duration // ""' "$STATE_FILE" 2>/dev/null)"
+      title="$(jq -r '.title // "Untitled"' "$STATE_FILE" 2>/dev/null || printf 'Untitled')"
+      artist="$(jq -r '.artist // "YouTube"' "$STATE_FILE" 2>/dev/null || printf 'YouTube')"
+      thumb="$(jq -r '.thumbnail // ""' "$STATE_FILE" 2>/dev/null || printf '')"
+      dur="$(jq -r '.duration // ""' "$STATE_FILE" 2>/dev/null || printf '')"
+      [[ -n "$title" ]] || title="Untitled"
+      [[ -n "$artist" ]] || artist="YouTube"
     fi
     [[ "$live" == true ]] || live=false
     url="${8:-}"
     # Streams only: a library url must be empty or http(s), otherwise the entry
     # could never play (launch_stream rejects it) and would stall the queue.
-    if [[ -n "$url" && "$url" != http* ]]; then printf 'bad stream url\n' >&2; exit 2; fi
+    if [[ -n "$url" && "$url" != http://* && "$url" != https://* ]]; then printf 'bad stream url\n' >&2; exit 2; fi
     tmp="$DATA_DIR/library.json.tmp"
     jq -c --arg v "$vid" --arg t "$title" --arg a "$artist" --arg th "$thumb" --arg d "$dur" --argjson l "$live" --arg u "$url" \
       'map(select(.videoId != $v)) + [{videoId:$v,title:$t,artist:$a,thumbnail:$th,duration:$d,isLive:$l,url:$u}]' \
@@ -826,7 +928,7 @@ case "${1:-}" in
     valid_id "$vid" || exit 2
     [[ -f "$PL_DIR/$name.json" ]] || { printf 'no such playlist: %s\n' "$name" >&2; exit 1; }
     title="${4:-Untitled}"; artist="${5:-YouTube}"; thumb="${6:-}"; dur="${7:-}"; live="${8:-false}"; url="${9:-}"
-    if [[ -n "$url" && "$url" != http* ]]; then printf 'bad stream url\n' >&2; exit 2; fi
+    if [[ -n "$url" && "$url" != http://* && "$url" != https://* ]]; then printf 'bad stream url\n' >&2; exit 2; fi
     # Streams (radio/previews) keep their own art or none; only bare YouTube
     # ids get the ytimg fallback thumbnail.
     if [[ -z "${thumb:-}" || "$thumb" == "NA" ]]; then
@@ -859,7 +961,8 @@ case "${1:-}" in
     require jq
     name="${2:-}"; pl_name_ok "$name" || exit 2
     [[ -f "$PL_DIR/$name.json" ]] || exit 1
-    len="$(jq 'length' "$PL_DIR/$name.json")"
+    len="$(jq 'length' "$PL_DIR/$name.json" 2>/dev/null || printf 0)"
+    [[ "$len" =~ ^[0-9]+$ ]] || len=0
     (( len > 0 )) || { printf 'playlist is empty\n' >&2; exit 1; }
     queue_tmp="$RUNTIME_DIR/queue.json.tmp"
     cp -- "$PL_DIR/$name.json" "$queue_tmp" || exit 1
@@ -877,20 +980,22 @@ case "${1:-}" in
     mapfile -t base < <(ytdlp_base)
     aq=0; [[ "$(sget dlQuality)" == compact ]] && aq=5
     for client in android web; do
-      # --exec runs with the video-derived filename as $0 only (quoted): even a
-      # hostile video title cannot break out into shell.
+      # outtmpl forces a deterministic filename (no title-derived names, no
+      # --exec shell): the result lands at $tmp_out (opus) or a sibling
+      # .part.* that the newest-file fallback below normalizes.
       if yt-dlp "${base[@]}" --no-playlist -x --audio-format opus --audio-quality "$aq" \
           --extractor-args "youtube:player_client=$client" \
           --output "$MUSIC_DIR/.${vid}.part.%(ext)s" \
-          --exec "sh -c 'mv -- \"\$0\" \"${tmp_out}\" 2>/dev/null || true'" \
-          "https://www.youtube.com/watch?v=$vid" >/dev/null 2>&1; then
+          -- "https://www.youtube.com/watch?v=$vid" >/dev/null 2>&1; then
         break
       fi
     done
-    # yt-dlp names the file by title unless outtmpl forces it; normalize: find newest part file
+    # Normalize: find newest part file (conversion may leave .webm + .opus).
     if [[ ! -s "$tmp_out" ]]; then
       newest="$(ls -t "$MUSIC_DIR"/."${vid}".part.* 2>/dev/null | head -n1 || true)"
-      [[ -n "$newest" ]] && mv -- "$newest" "$tmp_out" || true
+      if [[ -n "$newest" && -f "$newest" ]]; then
+        mv -- "$newest" "$tmp_out" 2>/dev/null || true
+      fi
     fi
     if [[ ! -s "$tmp_out" ]]; then
       # Don't litter .part files on failure.
@@ -943,15 +1048,22 @@ case "${1:-}" in
     [[ "$(stat -c%s -- "$src" 2>/dev/null || printf 0)" -le 52428800 ]] || { printf 'font file too large\n' >&2; exit 2; }
     dest_dir="$HOME/.local/share/fonts/ytmusic-plus"
     mkdir -p "$dest_dir"
-    base="$(basename "$src")"
+    base="$(basename -- "$src")"
+    # Basename guard: reject . / .. and overlong names; cp -- already blocks
+    # leading-dash flag injection.
+    [[ "$base" != "." && "$base" != ".." ]] || { printf 'bad font filename\n' >&2; exit 2; }
+    (( ${#base} >= 1 && ${#base} <= 128 )) || { printf 'bad font filename\n' >&2; exit 2; }
+    [[ "$base" != *"/"* ]] || { printf 'bad font filename\n' >&2; exit 2; }
     cp -- "$src" "$dest_dir/$base"
     fc-cache -f "$dest_dir" >/dev/null 2>&1
-    family="$(fc-scan --format '%{family[0]}\n' "$dest_dir/$base" 2>/dev/null | head -n1)"
+    family="$(fc-scan --format '%{family[0]}\n' "$dest_dir/$base" 2>/dev/null | head -n1 | tr -d '\n\r')"
     if [[ -z "$family" ]]; then
       rm -f -- "$dest_dir/$base"
       printf 'could not read font family\n' >&2
       exit 2
     fi
+    # Same 128-char cap as `set customFont` (sset bypasses that whitelist).
+    (( ${#family} >= 1 && ${#family} <= 128 )) || { rm -f -- "$dest_dir/$base"; printf 'bad font family\n' >&2; exit 2; }
     sset customFont "$family" >/dev/null
     printf '%s\n' "$family"
     ;;
@@ -984,6 +1096,11 @@ case "${1:-}" in
         awk -v v="$val" 'BEGIN{exit !(v >= -5 && v <= 5)}' || { printf 'lyricsOffset must be within -5..5s\n' >&2; exit 2; } ;;
       customFont)
         (( ${#val} <= 128 )) || { printf 'font name too long\n' >&2; exit 2; } ;;
+      update_last_check)
+        # Self-update bookkeeping (the ONE extra whitelisted key): epoch
+        # seconds of the last update check, or "off" when the user disables
+        # auto-apply. Dual-purpose by design so the whitelist grows by one.
+        [[ "$val" == off || "$val" =~ ^[0-9]+$ ]] || { printf 'update_last_check must be off|epoch-seconds\n' >&2; exit 2; } ;;
       eqPreset)
         eq_preset_gains "$val" >/dev/null || { printf 'unknown eq preset\n' >&2; exit 2; } ;;
       eqGains)
@@ -1008,7 +1125,8 @@ case "${1:-}" in
       esac
     fi
     [[ "$mode" == off || "$mode" == all || "$mode" == one ]] || exit 2
-    cur="$(sget loop)"
+    cur="$(sget loop 2>/dev/null || printf off)"
+    [[ "$cur" == all || "$cur" == one || "$cur" == off ]] || cur=off
     sset loop "$mode"
     # Switching AWAY from one mid-song must unloop the running mpv now —
     # the next launch would anyway, but the current file would repeat forever.
@@ -1021,7 +1139,8 @@ case "${1:-}" in
     # Shuffle everything AFTER the current track; history stays intact and the
     # song on air keeps playing (mpv already has the stream).
     require jq
-    len="$(jq 'length' "$QUEUE_FILE")"
+    len="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+    [[ "$len" =~ ^[0-9]+$ ]] || len=0
     (( len > 0 )) || exit 0
     idx="$(jq -r '.index // 0' "$STATE_FILE" 2>/dev/null || printf 0)"
     [[ "$idx" =~ ^-?[0-9]+$ ]] || idx=0
@@ -1032,17 +1151,41 @@ case "${1:-}" in
       mapfile -t order < <(seq $(( idx + 1 )) $(( len - 1 )) | shuf)
       jq -c --argjson order "$(printf '%s\n' "${order[@]}" | jq -R . | jq -s 'map(tonumber)')" \
         --argjson cut "$(( idx + 1 ))" \
-        '. as $q | $q[0:$cut] + [$order[] | $q[.]]' "$QUEUE_FILE" >"$tmp"
+        '. as $q | $q[0:$cut] + [$order[] | $q[.]]' "$QUEUE_FILE" >"$tmp" 2>/dev/null || { rm -f -- "$tmp"; exit 1; }
     else
-      jq -c --argjson i "$idx" '. as $q | $q[0:($i+1)] + ($q[($i+1):] | reverse)' "$QUEUE_FILE" >"$tmp"
+      jq -c --argjson i "$idx" '. as $q | $q[0:($i+1)] + ($q[($i+1):] | reverse)' "$QUEUE_FILE" >"$tmp" 2>/dev/null || { rm -f -- "$tmp"; exit 1; }
     fi
-    [[ -s "$tmp" ]] || exit 1
+    [[ -s "$tmp" ]] || { rm -f -- "$tmp"; exit 1; }
     mv -- "$tmp" "$QUEUE_FILE"
     printf 'shuffled\n'
     ;;
   queue-show)
     require jq
     jq -r '.[] | [.videoId, (.title//"Untitled"), (.artist//"YouTube"), (.duration//""), (.thumbnail//""), (if (.isLive//false) then "is_live" else "not_live" end), (.url//"")] | @tsv' "$QUEUE_FILE"
+    ;;
+  queue-clear)
+    # Empty the queue and stop playback. Prints `cleared`.
+    queue_tmp="$RUNTIME_DIR/queue.json.tmp"
+    printf '[]\n' >"$queue_tmp" || exit 1
+    mv -- "$queue_tmp" "$QUEUE_FILE" || exit 1
+    rm -f -- "$STATE_FILE" "$FAIL_FILE"
+    kill_old_mpv 2>/dev/null || true
+    printf 'cleared\n'
+    ;;
+  song-link)
+    # Print the current track's share URL: the direct stream url for
+    # radio/preview tracks (fake RDO/PVW ids), else the YouTube watch URL.
+    # Prints one line, exit 0; exit 1 when no track is loaded.
+    require jq
+    [[ -s "$STATE_FILE" ]] || { printf 'no track\n' >&2; exit 1; }
+    s_url="$(jq -r '.url // ""' "$STATE_FILE" 2>/dev/null || printf '')"
+    if [[ "$s_url" == http://* || "$s_url" == https://* ]]; then
+      printf '%s\n' "$s_url"
+      exit 0
+    fi
+    s_vid="$(jq -r '.videoId // ""' "$STATE_FILE" 2>/dev/null || printf '')"
+    valid_id "$s_vid" || { printf 'no track\n' >&2; exit 1; }
+    printf 'https://www.youtube.com/watch?v=%s\n' "$s_vid"
     ;;
   sleep)
     # sleep MINUTES | sleep song | sleep off
@@ -1118,10 +1261,10 @@ case "${1:-}" in
       age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
       if (( age < 21600 )); then cat "$key"; exit 0; fi
     fi
-    rss="$(curl -sS -m "$CONNECT_TIMEOUT" "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+    rss="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
     ids="$(jq -r '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | unique | .[0:30] | join(",")' <<<"$rss" 2>/dev/null || true)"
     [[ -n "$ids" ]] || { printf 'charts unavailable\n' >&2; exit 1; }
-    lookup="$(curl -sS -m "$CONNECT_TIMEOUT" -G --data-urlencode "id=$ids" --data-urlencode "entity=song" "https://itunes.apple.com/lookup" 2>/dev/null || true)"
+    lookup="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "id=$ids" --data-urlencode "entity=song" -- "https://itunes.apple.com/lookup" 2>/dev/null || true)"
     out="$(jq -c '[.results[]? | select(.wrapperType == "track") | {
         title: (.trackName // "Untitled"),
         artist: (.artistName // "Unknown"),
@@ -1141,9 +1284,9 @@ case "${1:-}" in
       age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
       if (( age < 600 )); then cat "$key"; exit 0; fi
     fi
-    json="$(curl -sS -m "$CONNECT_TIMEOUT" -G --data-urlencode "term=$query" \
+    json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$query" \
       --data-urlencode "media=music" --data-urlencode "entity=song" \
-      --data-urlencode "limit=20" "https://itunes.apple.com/search" 2>/dev/null || true)"
+      --data-urlencode "limit=20" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
     out="$(jq -c '[.results[]? | {
         title: (.trackName // "Untitled"),
         artist: (.artistName // "Unknown"),
@@ -1168,10 +1311,10 @@ case "${1:-}" in
     fi
     json=""
     for host in https://de1.api.radio-browser.info https://nl1.api.radio-browser.info; do
-      json="$(curl -sS -m "$CONNECT_TIMEOUT" -G \
+      json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G \
         --data-urlencode "order=votes" --data-urlencode "reverse=true" \
         --data-urlencode "hidebroken=true" --data-urlencode "limit=25" \
-        "$host/json/stations/bytag/$tag" 2>/dev/null || true)"
+        -- "$host/json/stations/bytag/$tag" 2>/dev/null || true)"
       [[ -n "$json" && "$json" != "[]" ]] && break
     done
     out="$(jq -c '[.[]? | select(.url_resolved != null and .url_resolved != "") | {
@@ -1202,14 +1345,14 @@ case "${1:-}" in
     fi
     fetch_get() {
       # $1=artist $2=title $3=duration-seconds
-      curl -sS -m "$CONNECT_TIMEOUT" -G \
+      curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 1M -G \
         --data-urlencode "artist_name=$1" --data-urlencode "track_name=$2" \
         --data-urlencode "duration=$3" \
-        "https://lrclib.net/api/get" 2>/dev/null || true
+        -- "https://lrclib.net/api/get" 2>/dev/null || true
     }
     fetch_search() {
-      curl -sS -m "$CONNECT_TIMEOUT" -G \
-        --data-urlencode "q=$1" "https://lrclib.net/api/search" 2>/dev/null || true
+      curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 1M -G \
+        --data-urlencode "q=$1" -- "https://lrclib.net/api/search" 2>/dev/null || true
     }
     pick_one() {
       jq -r 'if .syncedLyrics != null and .syncedLyrics != "" then .syncedLyrics
@@ -1281,8 +1424,94 @@ case "${1:-}" in
     rm -f -- "$err_tmp" "$out_tmp"
     if [[ "$rc" -eq 0 || "$rc" -eq 124 || "$rc" -eq 143 ]]; then exit 1; else exit "$rc"; fi
     ;;
+  update-check)
+    # Read-only SHA compare. Never writes state/queue/settings, never fails
+    # the UI: transport or git problems report available=unknown, exit 0.
+    plugindir="$(update_plugin_dir)"
+    if [[ ! -d "$plugindir/.git" ]]; then
+      printf 'git_checkout:false\n'
+      printf 'not a git checkout - update via: omarchy plugin update local.ytmusic-plus\n'
+      exit 0
+    fi
+    origin_url=""; origin_rc=0
+    origin_url="$(update_origin_url "$plugindir")" || origin_rc=$?
+    if (( origin_rc == 1 )); then
+      printf 'refusing update-check: origin is not %s (anti-hijack)\n' "$UPDATE_UPSTREAM" >&2
+      exit 2
+    elif (( origin_rc != 0 )); then
+      printf 'UPDATE_CHECK local_version=%s local_sha=unknown remote_sha=unknown available=unknown\n' \
+        "$(update_manifest_version "$plugindir")"
+      printf 'update-check: cannot verify origin (no git or no origin remote)\n' >&2
+      exit 0
+    fi
+    local_full=""; remote_line=""; remote_full=""
+    if command -v timeout >/dev/null 2>&1; then
+      local_full="$(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
+    else
+      local_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
+    fi
+    [[ "$local_full" =~ ^[0-9a-f]{40}$ ]] || local_full=""
+    if command -v timeout >/dev/null 2>&1; then
+      upd_ls=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" ls-remote origin HEAD)
+    else
+      upd_ls=(git -C "$plugindir" ls-remote origin HEAD)
+    fi
+    remote_line="$("${upd_ls[@]}" 2>/dev/null | head -n 1 || true)"
+    remote_full="${remote_line%%[[:space:]]*}"
+    [[ "$remote_full" =~ ^[0-9a-f]{40}$ ]] || remote_full=""
+    manifest_v="$(update_manifest_version "$plugindir")"
+    if [[ -z "$local_full" || -z "$remote_full" ]]; then
+      [[ -n "$local_full" ]] && local_short="${local_full:0:7}" || local_short="unknown"
+      [[ -n "$remote_full" ]] && remote_short="${remote_full:0:7}" || remote_short="unknown"
+      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=unknown\n' \
+        "$manifest_v" "$local_short" "$remote_short"
+      [[ -z "$local_full" ]] && printf 'update-check: cannot read local HEAD\n' >&2
+      [[ -z "$remote_full" ]] && printf 'update-check: cannot reach origin (offline?)\n' >&2
+      exit 0
+    fi
+    if [[ "$local_full" == "$remote_full" ]]; then avail=no; else avail=yes; fi
+    printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=%s\n' \
+      "$manifest_v" "${local_full:0:7}" "${remote_full:0:7}" "$avail"
+    ;;
+  update-apply)
+    # Plugin-manager update + rescan so the new QML hot-loads. Never touches
+    # queue/state/mpv; never deletes anything. Propagates the update exit code.
+    plugindir="$(update_plugin_dir)"
+    if [[ -d "$plugindir/.git" ]]; then
+      origin_url=""; origin_rc=0
+      origin_url="$(update_origin_url "$plugindir")" || origin_rc=$?
+      if (( origin_rc == 1 )); then
+        printf 'refusing update-apply: origin is not %s (anti-hijack)\n' "$UPDATE_UPSTREAM" >&2
+        exit 2
+      fi
+      # rc==2 (no git binary / no origin): proceed via the plugin manager,
+      # which is the trusted path for such installs.
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+      upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus)
+    else
+      upd_cmd=(omarchy plugin update local.ytmusic-plus)
+    fi
+    if "${upd_cmd[@]}"; then
+      upd_rc=0
+    else
+      upd_rc=$?
+    fi
+    if (( upd_rc != 0 )); then exit "$upd_rc"; fi
+    if command -v omarchy-shell >/dev/null 2>&1; then
+      if command -v timeout >/dev/null 2>&1; then
+        rescan_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" omarchy-shell shell rescanPlugins)
+      else
+        rescan_cmd=(omarchy-shell shell rescanPlugins)
+      fi
+      "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
+    fi
+    new_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$new_full" =~ ^[0-9a-f]{40}$ ]]; then new_short="${new_full:0:7}"; else new_short="unknown"; fi
+    printf 'UPDATE_APPLIED %s\n' "$new_short"
+    ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear|update-check|update-apply|viz-test>\n' >&2
     exit 2
     ;;
 esac

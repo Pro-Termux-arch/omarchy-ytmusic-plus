@@ -27,9 +27,12 @@ BarWidget {
   property string vizPath: Qt.resolvedUrl("bin/ytviz").toString().replace("file://", "")
   property int vizFailCount: 0
   property double vizLastFailMs: 0
+  property double lastActiveMs: 0
+  property bool idleHidden: false
 
-  implicitWidth: hasTrack ? Style.space(218) : Style.space(30)
+  implicitWidth: (root.hasTrack && !root.idleHidden) ? Style.space(218) : Style.space(30)
   implicitHeight: barSize
+  Behavior on implicitWidth { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
   function applyViz(line) {
     var s = String(line || "")
@@ -50,6 +53,7 @@ BarWidget {
   function open(payloadJson) {
     popupOpen = true
     Qt.callLater(function() {
+      if (!root.popupOpen) return
       if (popupPlayerLoader.item && popupPlayerLoader.item.open) popupPlayerLoader.item.open(payloadJson || "{}")
     })
   }
@@ -82,7 +86,17 @@ BarWidget {
       var status = JSON.parse(String(raw || "{}"))
       root.playerRunning = status.running === true
       root.playing = root.playerRunning && status.paused !== true
-      root.title = String(status.title || "").slice(0, 500)
+      var newTitle = String(status.title || "").slice(0, 500)
+      if (newTitle !== "" && newTitle !== root.title) {
+        root.lastActiveMs = Date.now()
+        root.idleHidden = false
+      }
+      if (root.playing) {
+        root.lastActiveMs = Date.now()
+        root.idleHidden = false
+      }
+      if (newTitle === "") root.idleHidden = false
+      root.title = newTitle
       root.artist = String(status.artist || "").slice(0, 500)
       var thumb = String(status.thumbnail || "")
       if (thumb !== "" && thumb.indexOf("https://") !== 0 && thumb.indexOf("http://") !== 0 && thumb.indexOf("file://") !== 0) thumb = ""
@@ -103,6 +117,9 @@ BarWidget {
     color: root.hasTrack ? Color.bar.background : "transparent"
     border.width: root.hasTrack ? 1 : 0
     border.color: pillHover.containsMouse ? Color.accent : Color.popups.border
+    scale: bodyMouse.pressed ? 0.97 : 1.0
+    transformOrigin: Item.Center
+    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
     Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
     // Hover glow: soft accent wash fading in on hover. NoButton so it never
@@ -125,6 +142,7 @@ BarWidget {
     // Body click: anywhere on the pill that isn't a button opens the player.
     // Declared above the hover detector so clicks still land here.
     MouseArea {
+      id: bodyMouse
       anchors.fill: parent
       cursorShape: Qt.PointingHandCursor
       onClicked: root.openPlayer()
@@ -132,7 +150,12 @@ BarWidget {
 
     Item {
       anchors.fill: parent
-      visible: !root.hasTrack
+      visible: !root.hasTrack || root.idleHidden
+      opacity: (!root.hasTrack || root.idleHidden) ? 1 : 0
+      scale: (!root.hasTrack || root.idleHidden) ? 1 : 0.85
+      transformOrigin: Item.Center
+      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+      Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
 
       Text {
         anchors.centerIn: parent
@@ -147,7 +170,9 @@ BarWidget {
       anchors.fill: parent
       anchors.margins: Style.space(2)
       spacing: Style.space(3)
-      visible: root.hasTrack
+      visible: root.hasTrack && !root.idleHidden
+      opacity: (root.hasTrack && !root.idleHidden) ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
       Rectangle {
         width: parent.height
@@ -188,9 +213,9 @@ BarWidget {
       Item {
         width: Style.space(20)
         height: parent.height
-        scale: prevMouse.pressed ? 0.9 : 1.0
+        scale: prevMouse.pressed ? 0.9 : (prevMouse.containsMouse ? 1.07 : 1.0)
         transformOrigin: Item.Center
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
         Rectangle {
           anchors.centerIn: parent
           width: Style.space(20)
@@ -198,7 +223,7 @@ BarWidget {
           radius: width / 2
           color: Color.accent
           opacity: prevMouse.containsMouse ? 0.18 : 0
-          Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰒮"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
         MouseArea { id: prevMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("previous") }
@@ -209,16 +234,16 @@ BarWidget {
         height: width
         radius: width / 2
         color: "transparent"
-        scale: playMouse.pressed ? 0.9 : 1.0
+        scale: playMouse.pressed ? 0.9 : (playMouse.containsMouse ? 1.07 : 1.0)
         transformOrigin: Item.Center
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
         anchors.verticalCenter: parent.verticalCenter
         Rectangle {
           anchors.fill: parent
           radius: width / 2
           color: Color.accent
           opacity: playMouse.containsMouse ? 0.22 : 0
-          Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰏤"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
         Text { anchors.centerIn: parent; text: "󰐊"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
@@ -237,9 +262,9 @@ BarWidget {
       Item {
         width: Style.space(20)
         height: parent.height
-        scale: nextMouse.pressed ? 0.9 : 1.0
+        scale: nextMouse.pressed ? 0.9 : (nextMouse.containsMouse ? 1.07 : 1.0)
         transformOrigin: Item.Center
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
         Rectangle {
           anchors.centerIn: parent
           width: Style.space(20)
@@ -247,7 +272,7 @@ BarWidget {
           radius: width / 2
           color: Color.accent
           opacity: nextMouse.containsMouse ? 0.18 : 0
-          Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: 190; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰒭"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
         MouseArea { id: nextMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
@@ -307,6 +332,7 @@ BarWidget {
     onTriggered: {
       root.refreshStatus()
       var want = root.hasTrack && root.playing
+      if (root.hasTrack && !root.playing && (Date.now() - root.lastActiveMs) > 60000) root.idleHidden = true
       if (!want) {
         if (vizProc.running) vizProc.running = false
         if (root.vizLevels.length) root.vizLevels = []
