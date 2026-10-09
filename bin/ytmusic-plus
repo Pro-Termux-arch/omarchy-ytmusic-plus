@@ -286,7 +286,7 @@ build_dsp_args() {
   (( VOL >= 0 && VOL <= 100 )) || VOL=70
   LOOP_ONE="false"; [[ "$(sget loop)" == one ]] && LOOP_ONE="true"
   if [[ "$(sget silence)" == on ]]; then
-    DSP_ARGS+=(--af-append='silenceremove=start_periods=1:start_duration=0.3:start_threshold=-50dB')
+    DSP_ARGS+=(--af-append='silenceremove=start_periods=1:start_duration=0.3:start_threshold=-50dB:stop_periods=1:stop_duration=1.5:stop_threshold=-45dB')
   fi
   if [[ "$(sget normalize)" == on ]]; then
     DSP_ARGS+=(--af-append='dynaudnorm=f=150:g=7')
@@ -1661,7 +1661,8 @@ case "${1:-}" in
     jq -cn --argjson taste "$taste_json" --argjson lib "$lib_json" --argjson now "$now_p" '
       ($taste | map(select(type == "object"))) as $t
       | ($lib | map(select(type == "object"))) as $l
-      | ($t | map({k: ((.a // "" | tostring) | ascii_downcase), orig: (.a // "" | tostring), ts: (.ts // 0)}) | map(select(.k != ""))) as $norm
+      | ($t | map({k: ((.a // "" | tostring) | ascii_downcase), orig: (.a // "" | tostring), ts: (.ts // 0)}) | map(select(.k != ""))) as $norm0
+      | (if ($norm0 | length == 0) and (($l | map(select(((.artist // "" | tostring) != ""))) | length) > 0) then ($l | map({k: ((.artist // "" | tostring) | ascii_downcase), orig: (.artist // "" | tostring), ts: $now}) | map(select(.k != ""))) else $norm0 end) as $norm
       | ($l | map(((.artist // "" | tostring) | ascii_downcase)) | map(select(. != ""))) as $lnorm
       | ($norm | map(.k) | unique) as $keys
       | {artists: (
@@ -1700,7 +1701,8 @@ case "${1:-}" in
     top3="$(jq -cnr --argjson taste "$taste_json" --argjson lib "$lib_json" --argjson now "$now" '
       ($taste | map(select(type == "object"))) as $t
       | ($lib | map(select(type == "object"))) as $l
-      | ($t | map({k: ((.a // "" | tostring) | ascii_downcase), orig: (.a // "" | tostring), ts: (.ts // 0)}) | map(select(.k != ""))) as $norm
+      | ($t | map({k: ((.a // "" | tostring) | ascii_downcase), orig: (.a // "" | tostring), ts: (.ts // 0)}) | map(select(.k != ""))) as $norm0
+      | (if ($norm0 | length == 0) and (($l | map(select(((.artist // "" | tostring) != ""))) | length) > 0) then ($l | map({k: ((.artist // "" | tostring) | ascii_downcase), orig: (.artist // "" | tostring), ts: $now}) | map(select(.k != ""))) else $norm0 end) as $norm
       | ($l | map(((.artist // "" | tostring) | ascii_downcase)) | map(select(. != ""))) as $lnorm
       | ($norm | map(.k) | unique) as $keys
       | ([$keys[] as $k
@@ -1862,6 +1864,48 @@ case "${1:-}" in
     ' <<<"$json" 2>/dev/null || true)"
     [[ -n "$out" && "$out" != "[]" ]] || { printf 'nothing found\n' >&2; exit 1; }
     printf '%s\n' "$out"
+    ;;
+  artist-profile)
+    require curl; require jq
+    name="${2:-}"
+    (( ${#name} >= 1 && ${#name} <= 100 )) || { printf 'bad artist name\n' >&2; exit 2; }
+    if [[ "$name" =~ [[:cntrl:]] ]]; then printf 'bad artist name\n' >&2; exit 2; fi
+    bio=""; portrait=""; genre=""; subs_json="null"
+    enc="$(printf '%s' "$name" | jq -sRr @uri 2>/dev/null || true)"
+    if [[ -n "${enc:-}" ]]; then
+      wiki_json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://en.wikipedia.org/api/rest_v1/page/summary/$enc" 2>/dev/null || true)"
+      if [[ -n "${wiki_json:-}" ]]; then
+        bio_tmp="$(jq -r '(.extract // "" | tostring) | .[0:2000]' <<<"$wiki_json" 2>/dev/null || true)"
+        [[ -n "${bio_tmp:-}" ]] && bio="$bio_tmp" || bio=""
+        port_tmp="$(jq -r 'if ((.thumbnail.source // "") | tostring | test("^https://")) then (.thumbnail.source | tostring) else "" end' <<<"$wiki_json" 2>/dev/null || true)"
+        [[ -n "${port_tmp:-}" ]] && portrait="$port_tmp" || portrait=""
+      fi
+    fi
+    itunes_json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$name" --data-urlencode "media=music" --data-urlencode "entity=song" --data-urlencode "limit=1" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
+    if [[ -n "${itunes_json:-}" ]]; then
+      genre_tmp="$(jq -r '(.results[0].primaryGenreName // "" | tostring)' <<<"$itunes_json" 2>/dev/null || true)"
+      [[ -n "${genre_tmp:-}" ]] && genre="$genre_tmp" || genre=""
+    fi
+    if command -v yt-dlp >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+      base_ap=()
+      mapfile -t base_ap < <(ytdlp_base) || true
+      chan_id="$(timeout 25 yt-dlp "${base_ap[@]}" --skip-download --flat-playlist --playlist-end 1 --print '%(channel_id)s' -- "ytsearch1:${name}" 2>/dev/null | head -n1 || true)"
+      if [[ "${chan_id:-}" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+        subs_raw="$(timeout 25 yt-dlp "${base_ap[@]}" --skip-download --playlist-end 1 --print '%(channel_follower_count)s' -- "https://www.youtube.com/channel/$chan_id" 2>/dev/null | head -n1 || true)"
+        if [[ "${subs_raw:-}" =~ ^[0-9]+$ ]]; then
+          subs_json="$subs_raw"
+          subs_text="$(awk -v n="$subs_raw" 'BEGIN { if (n >= 1000000000) printf "%.1fB subscribers", n/1000000000; else if (n >= 1000000) printf "%.1fM subscribers", n/1000000; else if (n >= 1000) printf "%.1fK subscribers", n/1000; else printf "%d subscribers", n }')"
+        else
+          subs_json="null"
+        fi
+      fi
+    fi
+    [[ -n "${bio:-}" ]] || bio=""
+    [[ "$portrait" == https://* ]] || portrait=""
+    [[ -n "${genre:-}" ]] || genre=""
+    [[ "$subs_json" =~ ^[0-9]+$ ]] || subs_json="null"
+    [[ "$subs_json" == "null" ]] && subs_text=""
+    jq -n --arg name "$name" --arg bio "$bio" --arg portrait "$portrait" --arg genre "$genre" --argjson subs "$subs_json" --arg substext "${subs_text:-}" '{name:$name,bio:$bio,portrait:$portrait,genre:$genre,subs:$subs,subsText:$substext}'
     ;;
   update-check)
     # update-check [stable|beta] (default beta). Read-only SHA compare. Never
@@ -2172,7 +2216,7 @@ case "${1:-}" in
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-songs NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
     exit 2
     ;;
 esac

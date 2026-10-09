@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.1.9 stable"
+  readonly property string appVersion: "v2.2 stable"
 
   property bool opened: false
   property bool searching: false
@@ -348,12 +348,28 @@ Item {
     if (n.length < 1 || n.length > 100) { errorMessage = "Artist name 1-100 chars"; return }
     artistProfile = n
     artistSongsModel.clear()
-    if (artistSongsProc.running) { artistSongsProc.pendingName = n; artistSongsProc.refetch = true; return }
+    artistBio = ""
+    artistSubs = ""
+    artistGenre = ""
+    artistPortrait = ""
+    artistBioOpen = false
+    if (artistSongsProc.running) {
+      artistSongsProc.pendingName = n
+      artistSongsProc.refetch = true
+      if (artistProfileProc.running) { artistProfileProc.pendingName = n; artistProfileProc.refetch = true }
+      return
+    }
     artistLoading = true
     errorMessage = ""
     artistSongsProc.collected = ""
     artistSongsProc.command = ["bash", scriptPath, "artist-songs", n]
     artistSongsProc.running = true
+    // Portrait/bio sidecar alongside artist-songs: same busy/refetch shape,
+    // argv-only call, never touches the songs loading state.
+    if (artistProfileProc.running) { artistProfileProc.pendingName = n; artistProfileProc.refetch = true; return }
+    artistProfileProc.collected = ""
+    artistProfileProc.command = ["bash", scriptPath, "artist-profile", n]
+    artistProfileProc.running = true
   }
 
   function toggleFollow(name, art) {
@@ -1294,6 +1310,13 @@ Item {
   ListModel { id: artistSongsModel }
   property string artistProfile: ""
   property bool artistLoading: false
+  // Artist detail sidecar (best-effort portrait/bio/subs/genre, silent when
+  // the backend has no artist-profile yet). artistBioOpen toggles the bio.
+  property string artistBio: ""
+  property string artistSubs: ""
+  property string artistGenre: ""
+  property string artistPortrait: ""
+  property bool artistBioOpen: false
 
   Process {
     id: searchProc
@@ -1684,6 +1707,49 @@ Item {
         var nxt = pendingName ? String(pendingName) : String(root.artistProfile)
         pendingName = ""
         if (nxt) root.loadArtistProfile(nxt)
+      }
+    }
+  }
+
+  // Artist portrait/bio/subs sidecar to artist-songs: best-effort, argv-only,
+  // silent on failure (missing backend command, offline, bad payload). Same
+  // pendingName/refetch shape as artistSongsProc, but a late reply refetches
+  // only itself so it can never restart the songs list. Stale replies (name
+  // mismatch with the open profile) are dropped without touching the UI.
+  Process {
+    id: artistProfileProc
+    property string collected: ""
+    property bool refetch: false
+    property string pendingName: ""
+    stdout: SplitParser { onRead: function(line) { artistProfileProc.collected += line + "\n" } }
+    onStarted: collected = ""
+    onExited: function(code) {
+      if (code === 0) {
+        try {
+          var obj = JSON.parse(String(collected || "{}")) || {}
+          var who = root.sanitizeText(obj.name || "")
+          if (!who || who === root.artistProfile) {
+            var b = root.sanitizeText(obj.bio || "")
+            var s = root.sanitizeText(obj.subsText || obj.subs || obj.followers || "")
+            var g = root.sanitizeText(obj.genre || "")
+            var p = String(obj.portrait || obj.art || "")
+            if (!root.isSafeImageUrl(p) || !/^https:/i.test(p.trim())) p = ""
+            root.artistBio = b
+            root.artistSubs = s
+            root.artistGenre = g
+            root.artistPortrait = p
+          }
+        } catch (e) {}
+      }
+      if (refetch) {
+        refetch = false
+        var nxtSelf = pendingName ? String(pendingName) : ""
+        pendingName = ""
+        if (nxtSelf && nxtSelf === root.artistProfile) {
+          collected = ""
+          command = ["bash", scriptPath, "artist-profile", nxtSelf]
+          running = true
+        }
       }
     }
   }
@@ -2142,17 +2208,28 @@ Item {
               InfoTip { watched: npDlHover; tipText: "Download offline (opus)" }
             }
             // follow toggle
-            Text {
-              text: root.currentFollowed ? "✓" : "+"
-              textFormat: Text.PlainText
-              color: root.currentFollowed ? root.accent : root.muted
-              font.family: root.uiFont
-              font.pixelSize: Style.font.iconLarge
+            Rectangle {
+              height: 24
+              width: npFollowLabel.width + 20
+              radius: 12
+              color: root.currentFollowed ? root.accent : "transparent"
+              border.width: 1
+              border.color: root.currentFollowed ? root.accent : root.muted
               anchors.verticalCenter: parent.verticalCenter
               transformOrigin: Item.Center
-              scale: npFollowHover.pressed ? 0.85 : 1.0
+              scale: npFollowHover.pressed ? 0.9 : 1.0
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
               Behavior on color { ColorAnimation { duration: 120 } }
+              Text {
+                id: npFollowLabel
+                anchors.centerIn: parent
+                text: root.currentFollowed ? "Following" : "+ Follow"
+                textFormat: Text.PlainText
+                color: root.currentFollowed ? root.onAccent : root.ink
+                font.family: root.uiFont
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
               MouseArea {
                 id: npFollowHover
                 anchors.fill: parent
@@ -2619,59 +2696,65 @@ Item {
             Item {
               width: parent.width
               height: Style.space(26)
-              Row {
+              // Dock-style pill: raised container, sliding highlight behind the
+              // active segment. Same count-guarded itemAt pattern as the tab
+              // dock (44px cold-start fallback, 200ms OutCubic slide).
+              Rectangle {
+                id: homeDock
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(5)
-                Repeater {
-                  model: [
-                    { key: "main", label: "Main" },
-                    { key: "top", label: "Top charts" },
-                    { key: "artist", label: "Artist" }
-                  ]
-                  Rectangle {
-                    width: modeLabel.width + Style.space(18)
-                    height: Style.space(24)
-                    radius: height / 2
-                    color: root.homeMode === modelData.key ? root.accent : "transparent"
-                    border.width: 1
-                    border.color: root.homeMode === modelData.key ? root.accent : root.muted
-                    Text {
-                      id: modeLabel
-                      anchors.centerIn: parent
-                      text: modelData.label
-                      color: root.homeMode === modelData.key ? root.onAccent : root.muted
-                      font.family: root.uiFont
-                      font.pixelSize: Style.font.caption
-                      font.bold: root.homeMode === modelData.key
-                    }
-                    MouseArea {
-                      anchors.fill: parent
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: root.setHomeMode(modelData.key)
-                    }
-                  }
-                }
+                width: Math.min(parent.width - homeRefreshBtn.width - Style.space(8), homeDockRow.width + Style.space(10))
+                height: Style.space(24)
+                radius: height / 2
+                color: root.raised
+                readonly property int litIdx: root.homeMode === "main" ? 0 : root.homeMode === "top" ? 1 : root.homeMode === "artist" ? 2 : 3
                 Rectangle {
-                  width: moreLabel.width + Style.space(14)
-                  height: Style.space(24)
+                  id: homeDockHi
+                  x: Style.space(5) + ((homeSegRepeater.count > homeDock.litIdx && homeSegRepeater.itemAt(homeDock.litIdx)) ? homeSegRepeater.itemAt(homeDock.litIdx).x : 0)
+                  y: Style.space(2)
+                  width: (homeSegRepeater.count > homeDock.litIdx && homeSegRepeater.itemAt(homeDock.litIdx)) ? homeSegRepeater.itemAt(homeDock.litIdx).width : Style.space(44)
+                  height: parent.height - Style.space(4)
                   radius: height / 2
-                  color: root.homeMore ? root.raised : "transparent"
-                  border.width: 1
-                  border.color: root.homeMore ? root.accent : root.muted
-                  Text {
-                    id: moreLabel
-                    anchors.centerIn: parent
-                    text: "More"
-                    color: root.homeMore ? root.accent : root.muted
-                    font.family: root.uiFont
-                    font.pixelSize: Style.font.caption
-                    font.bold: root.homeMore
-                  }
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.homeMore = !root.homeMore
+                  color: root.accent
+                  Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                  Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                }
+                Row {
+                  id: homeDockRow
+                  x: Style.space(5)
+                  y: Style.space(2)
+                  height: parent.height - Style.space(4)
+                  Repeater {
+                    id: homeSegRepeater
+                    model: [
+                      { key: "main", label: "Main" },
+                      { key: "top", label: "Top charts" },
+                      { key: "artist", label: "Artist" },
+                      { key: "more", label: "More" }
+                    ]
+                    Item {
+                      readonly property bool segActive: index < 3 ? root.homeMode === modelData.key : (root.homeMore || homeDock.litIdx === 3)
+                      width: segLabel.width + Style.space(14)
+                      height: homeDockRow.height
+                      Text {
+                        id: segLabel
+                        anchors.centerIn: parent
+                        text: modelData.label
+                        textFormat: Text.PlainText
+                        color: segActive ? root.onAccent : root.muted
+                        font.family: root.uiFont
+                        font.pixelSize: Style.font.caption
+                        font.bold: segActive
+                      }
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                          if (index < 3) root.setHomeMode(modelData.key)
+                          else root.homeMore = !root.homeMore
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -2679,6 +2762,9 @@ Item {
                 id: homeRefreshBtn
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
+                width: btnSize
+                height: btnSize
+                z: 5
                 glyph: "\u21bb"
                 btnSize: Style.space(18)
                 tip: "Refresh feed"
@@ -2902,86 +2988,124 @@ Item {
                 }
                 Item {
                   width: parent.width
-                  height: visible ? Style.space(52) : 0
+                  height: visible ? artistHeadRow.height + (profileStats.visible ? profileStats.height + Style.space(2) : 0) + (artistBioText.visible ? artistBioText.height + Style.space(2) : 0) : 0
                   visible: root.artistProfile !== ""
                   clip: true
-          Row {
-            anchors.fill: parent
-            spacing: Style.space(8)
-                    SettingBtn {
-                      label: "Back"
-                      anchors.verticalCenter: parent.verticalCenter
-                      tapped: function() { root.artistProfile = ""; root.artistSongsModel.clear(); root.reloadArtists() }
-                    }
-                    Rectangle {
-                      width: Style.space(42)
-                      height: width
-                      radius: Style.space(7)
-                      color: root.raised
-                      clip: true
-                      anchors.verticalCenter: parent.verticalCenter
-                      Image {
-                        anchors.fill: parent
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        source: {
-                          var n = root.artistProfile
-                          for (var i = 0; i < artistModel.count; i++) {
-                            var m = artistModel.get(i)
-                            if (m.name === n && m.art) return m.art
+                  Column {
+                    id: artistHeadCol
+                    width: parent.width
+                    spacing: 0
+                    Row {
+                      id: artistHeadRow
+                      width: parent.width
+                      height: Style.space(52)
+                      spacing: Style.space(8)
+                      SettingBtn {
+                        label: "Back"
+                        anchors.verticalCenter: parent.verticalCenter
+                        tapped: function() { root.artistProfile = ""; root.artistSongsModel.clear(); root.reloadArtists() }
+                      }
+                      Rectangle {
+                        width: Style.space(42)
+                        height: width
+                        radius: Style.space(7)
+                        color: root.raised
+                        clip: true
+                        anchors.verticalCenter: parent.verticalCenter
+                        Image {
+                          anchors.fill: parent
+                          fillMode: Image.PreserveAspectCrop
+                          asynchronous: true
+                          source: {
+                            if (root.artistPortrait !== "") return root.artistPortrait
+                            var n = root.artistProfile
+                            for (var i = 0; i < artistModel.count; i++) {
+                              var m = artistModel.get(i)
+                              if (m.name === n && m.art) return m.art
+                            }
+                            if (artistSongsModel.count > 0 && artistSongsModel.get(0).art) return artistSongsModel.get(0).art
+                            return ""
                           }
-                          if (artistSongsModel.count > 0 && artistSongsModel.get(0).art) return artistSongsModel.get(0).art
-                          return ""
+                          opacity: status === Image.Ready ? 1 : 0
+                          Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         }
-                        opacity: status === Image.Ready ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                        Text {
+                          anchors.centerIn: parent
+                          visible: {
+                            if (root.artistPortrait !== "") return false
+                            var n2 = root.artistProfile
+                            for (var j = 0; j < artistModel.count; j++) {
+                              if (artistModel.get(j).name === n2 && artistModel.get(j).art) return false
+                            }
+                            if (artistSongsModel.count > 0 && artistSongsModel.get(0).art) return false
+                            return true
+                          }
+                          text: "A"
+                          color: root.muted
+                          font.family: root.uiFont
+                          font.pixelSize: Style.font.bodySmall
+                          font.bold: true
+                        }
                       }
                       Text {
-                        anchors.centerIn: parent
-                        visible: {
-                          var n2 = root.artistProfile
-                          for (var j = 0; j < artistModel.count; j++) {
-                            if (artistModel.get(j).name === n2 && artistModel.get(j).art) return false
-                          }
-                          if (artistSongsModel.count > 0 && artistSongsModel.get(0).art) return false
-                          return true
-                        }
-                        text: "A"
-                        color: root.muted
+                        width: parent.width - Style.space(42) - Style.space(90) - Style.space(60) - (artistBioBtn.visible ? artistBioBtn.width + parent.spacing : 0) - parent.spacing * 3
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.artistProfile
+                        textFormat: Text.PlainText
+                        color: root.ink
                         font.family: root.uiFont
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
+                        elide: Text.ElideRight
+                      }
+                      SettingBtn {
+                        id: artistBioBtn
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.artistBio !== ""
+                        label: "BIO"
+                        tapped: function() { root.artistBioOpen = !root.artistBioOpen }
+                      }
+                      SettingBtn {
+                        anchors.verticalCenter: parent.verticalCenter
+                        label: {
+                          var nn = root.artistProfile
+                          for (var k = 0; k < artistModel.count; k++) {
+                            if (artistModel.get(k).name === nn) return "Following"
+                          }
+                          return "Follow"
+                        }
+                        tapped: function() {
+                          var nn2 = root.artistProfile
+                          var aa = ""
+                          for (var k2 = 0; k2 < artistModel.count; k2++) {
+                            if (artistModel.get(k2).name === nn2 && artistModel.get(k2).art) { aa = artistModel.get(k2).art; break }
+                          }
+                          if (!aa && artistSongsModel.count > 0) aa = artistSongsModel.get(0).art
+                          root.toggleFollow(nn2, aa)
+                        }
                       }
                     }
                     Text {
-                      width: parent.width - Style.space(42) - Style.space(90) - Style.space(60) - parent.spacing * 3
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: root.artistProfile
+                      id: profileStats
+                      width: parent.width
+                      visible: root.artistSubs !== "" || root.artistGenre !== ""
+                      text: (root.artistSubs !== "" ? root.artistSubs : "") + ((root.artistSubs !== "" && root.artistGenre !== "") ? " \u2022 " : "") + (root.artistGenre !== "" ? root.artistGenre : "")
                       textFormat: Text.PlainText
-                      color: root.ink
+                      color: root.muted
                       font.family: root.uiFont
-                      font.pixelSize: Style.font.bodySmall
-                      font.bold: true
+                      font.pixelSize: Style.font.caption
                       elide: Text.ElideRight
                     }
-                    SettingBtn {
-                      anchors.verticalCenter: parent.verticalCenter
-                      label: {
-                        var nn = root.artistProfile
-                        for (var k = 0; k < artistModel.count; k++) {
-                          if (artistModel.get(k).name === nn) return "Following"
-                        }
-                        return "Follow"
-                      }
-                      tapped: function() {
-                        var nn2 = root.artistProfile
-                        var aa = ""
-                        for (var k2 = 0; k2 < artistModel.count; k2++) {
-                          if (artistModel.get(k2).name === nn2 && artistModel.get(k2).art) { aa = artistModel.get(k2).art; break }
-                        }
-                        if (!aa && artistSongsModel.count > 0) aa = artistSongsModel.get(0).art
-                        root.toggleFollow(nn2, aa)
-                      }
+                    Text {
+                      id: artistBioText
+                      width: parent.width
+                      visible: root.artistBioOpen && root.artistBio !== ""
+                      text: root.artistBio
+                      textFormat: Text.PlainText
+                      wrapMode: Text.WordWrap
+                      color: root.muted
+                      font.family: root.uiFont
+                      font.pixelSize: Style.font.caption
                     }
                   }
                 }
@@ -3694,17 +3818,6 @@ Item {
               }
 
               SettingRow {
-                title: "Update channel"
-                desc: "Stable tags or beta branch"
-                control: SettingCycle {
-                  options: ["stable", "beta"]
-                  labels: ["Stable", "Beta"]
-                  current: root.updateChannel
-                  picked: function(v) { root.setUpdateChannel(v) }
-                }
-              }
-
-              SettingRow {
                 title: "Auto-apply updates"
                 desc: "Apply when a background check finds one"
                 control: SettingToggle {
@@ -3774,7 +3887,7 @@ Item {
               glyph: "\u21bb"
               btnSize: Style.space(18)
               tip: "Check for updates"
-              visible: !root.updateChecking
+              visible: !root.updateChecking && !root.updateAvailable
               tapped: function() { root.checkUpdates(true) }
             }
             Text {

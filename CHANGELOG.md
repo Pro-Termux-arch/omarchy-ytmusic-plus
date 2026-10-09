@@ -1,13 +1,27 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **19** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable)
+Updates so far: **20** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1.9 stable (current)
+## v2.2 stable (current)
+
+> Discovery with taste: instant personalization from day one, artist
+> profiles with bio + subscribers, silence trim that actually trims.
+
+- For-you seeds from your ♥ library when taste is fresh — personal rows
+  immediately, "Because you love X" proven on real data
+- Artist profiles: Wikipedia bio + portrait, iTunes genre, real YouTube
+  subscriber counts ("40.1M subscribers"), expandable BIO
+- Silence trim now eats trailing dead air ≥1.5s too (mid-track dips safe)
+- Home tabs are a dock-style sliding pill; refresh hardened + cache-bypass
+- Now-playing gets a real + Follow/Following pill; footer fits; bland
+  channel row removed (beta default)
+
+## v2.1.9 stable
 
 > Refresh actually refreshes, copy sits center stage, and every song gets
 > a follow button where your thumb already is.
