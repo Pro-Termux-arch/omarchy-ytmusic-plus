@@ -1,13 +1,26 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **17** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable)
+Updates so far: **18** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1.7 stable (current)
+## v2.1.8 stable (current)
+
+> Home goes GOAT: Main feed with real taste profiling, fused multi-region
+> charts, and artist follows with profiles. Feed refresh button included.
+
+- Main tab learns your taste locally (plays + loves + recency, no login):
+  "Because you love X" rows with artwork + previews, trending fallback
+- Top charts fuses US+UK+AU Apple RSS by reciprocal rank, 6h cache,
+  single batched artwork lookup — fast and accurate
+- Artist tab: follow/unfollow (persisted), roster grid, per-artist profile
+  with top songs, self-serve search-to-follow
+- Refresh-feed button with spin state; radio + tune search kept under More
+
+## v2.1.7 stable
 
 > Updater test target: version bump only, no functional changes — update
 > from v2.1.6 to exercise the restart box end to end.

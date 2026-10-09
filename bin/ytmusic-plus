@@ -500,6 +500,8 @@ start_index() {
   jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp" 2>/dev/null || return 1
   [[ -s "$state_tmp" ]] || return 1
   mv -- "$state_tmp" "$STATE_FILE"
+  # Taste hook: best-effort play log, never blocks playback (silent, || true).
+  valid_id "$vid" && "$0" taste-log "$vid" "$(jq -r '.title // ""' <<<"$track" 2>/dev/null || printf '')" "$(jq -r '.artist // ""' <<<"$track" 2>/dev/null || printf '')" >/dev/null 2>&1 || true
   launch_id "$vid"
 }
 
@@ -1387,27 +1389,70 @@ case "${1:-}" in
   # All print one JSON array: [{title,artist,art,url,kind}]. Only the query
   # string ever leaves the machine, and results are cached on disk.
   charts)
-    # Apple Music top songs (RSS, no key): ids -> single batched lookup for
-    # previews + artwork. Cached 6h.
+    # Multi-region Apple RSS fusion (us+gb+au RRF), single batched lookup. Cached 6h.
     require curl; require jq
     prune_cache
-    key="$CACHE_DIR/home-charts"
+    key="$CACHE_DIR/charts.json"
+    legacy_key="$CACHE_DIR/home-charts"
     now="$(date +%s)"
     if [[ -s "$key" ]]; then
       age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
       if (( age < 21600 )); then cat "$key"; exit 0; fi
+    elif [[ -s "$legacy_key" ]]; then
+      age=$(( now - $(stat -c %Y "$legacy_key" 2>/dev/null || printf 0) ))
+      if (( age < 21600 )); then cat "$legacy_key"; exit 0; fi
     fi
-    rss="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
-    ids="$(jq -r '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | unique | .[0:30] | join(",")' <<<"$rss" 2>/dev/null || true)"
-    [[ -n "$ids" ]] || { printf 'charts unavailable\n' >&2; exit 1; }
+    region_arg="${2:-}"
+    if [[ "$region_arg" =~ ^[a-z]{2}$ ]]; then
+      regions="$region_arg"
+    else
+      regions="us gb au"
+    fi
+    ids=""
+    if [[ "$regions" == *" "* ]]; then
+      rss_us="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+      rss_gb="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/gb/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+      rss_au="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/au/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+      ids_us="$(jq -c '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | map(select(. != "")) | .[0:30]' <<<"$rss_us" 2>/dev/null || printf '[]')"
+      ids_gb="$(jq -c '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | map(select(. != "")) | .[0:30]' <<<"$rss_gb" 2>/dev/null || printf '[]')"
+      ids_au="$(jq -c '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | map(select(. != "")) | .[0:30]' <<<"$rss_au" 2>/dev/null || printf '[]')"
+      [[ "$ids_us" =~ ^\[ ]] || ids_us="[]"
+      [[ "$ids_gb" =~ ^\[ ]] || ids_gb="[]"
+      [[ "$ids_au" =~ ^\[ ]] || ids_au="[]"
+      ids="$(jq -r -n --argjson a "$ids_us" --argjson b "$ids_gb" --argjson c "$ids_au" '
+        ([($a | to_entries[] | {id: .value, rank: (.key + 1)}),
+          ($b | to_entries[] | {id: .value, rank: (.key + 1)}),
+          ($c | to_entries[] | {id: .value, rank: (.key + 1)})]
+        | map(select(.id != "")))
+        | if length == 0 then empty
+          else (sort_by(.id) | group_by(.id)
+            | map({id: .[0].id, score: (map(1 / (60 + .rank)) | add)})
+            | sort_by(-.score) | .[0:30] | map(.id) | join(","))
+          end' 2>/dev/null || true)"
+    else
+      rss_one="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/${regions}/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+      ids="$(jq -r '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | map(select(. != "")) | unique | .[0:30] | join(",")' <<<"$rss_one" 2>/dev/null || true)"
+    fi
+    [[ -n "$ids" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
     lookup="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "id=$ids" --data-urlencode "entity=song" -- "https://itunes.apple.com/lookup" 2>/dev/null || true)"
-    out="$(jq -c '[.results[]? | select(.wrapperType == "track") | {
+    out="$(jq -c --arg ids "$ids" '($ids | split(",") | map(select(. != ""))) as $order
+      | [.results[]? | select(.wrapperType == "track") | {
         title: (.trackName // "Untitled"),
         artist: (.artistName // "Unknown"),
-        art: ((.artworkUrl100 // "") | sub("100x100"; "300x300")),
-        url: (.previewUrl // ""), kind: "chart"}]' <<<"$lookup" 2>/dev/null || true)"
-    [[ -n "$out" && "$out" != "[]" ]] || { printf 'charts unavailable\n' >&2; exit 1; }
-    printf '%s' "$out" | tee "$key"
+        art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100 // "") | sub("100x100"; "300x300")) else "" end),
+        url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end), kind: "chart",
+        _tid: ((.trackId // 0) | tostring)}]
+      | (map(. as $e | . + {__idx: (($order | index($e._tid)) // 9999)}) | sort_by(.__idx) | map(del(._tid, .__idx)))' <<<"$lookup" 2>/dev/null || true)"
+    [[ -n "$out" && "$out" != "[]" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
+    tmp_c="$CACHE_DIR/charts.json.tmp"
+    if printf '%s' "$out" >"$tmp_c" 2>/dev/null && [[ -s "$tmp_c" ]]; then
+      commit "$tmp_c" "$key" || { rm -f -- "$tmp_c"; printf 'Nothing here yet\n' >&2; exit 1; }
+      printf '%s' "$out" >"$legacy_key.tmp" 2>/dev/null && mv -- "$legacy_key.tmp" "$legacy_key" 2>/dev/null || rm -f -- "$legacy_key.tmp"
+      cat -- "$key"
+    else
+      rm -f -- "$tmp_c"
+      printf 'Nothing here yet\n' >&2; exit 1
+    fi
     ;;
   tunes)
     # iTunes Search: any artist/genre/mood -> songs with 30s previews. Cached 10min.
@@ -1559,6 +1604,232 @@ case "${1:-}" in
     fi
     rm -f -- "$err_tmp" "$out_tmp"
     if [[ "$rc" -eq 0 || "$rc" -eq 124 || "$rc" -eq 143 ]]; then exit 1; else exit "$rc"; fi
+    ;;
+  taste-log)
+    require jq
+    vid="${2:-}"; t_in="${3:-}"; a_in="${4:-}"
+    valid_id "$vid" || exit 2
+    t_in="${t_in:0:200}"; a_in="${a_in:0:200}"
+    [[ -n "$t_in" ]] || t_in="Untitled"
+    [[ -n "$a_in" ]] || a_in="YouTube"
+    taste_file="$DATA_DIR/taste.json"
+    [[ -e "$taste_file" ]] || printf '[]\n' >"$taste_file"
+    if ! jq -e 'type == "array"' "$taste_file" >/dev/null 2>&1; then
+      tmp_heal="$DATA_DIR/taste.json.heal.tmp"
+      if printf '[]\n' >"$tmp_heal" 2>/dev/null && [[ -s "$tmp_heal" ]]; then
+        mv -- "$tmp_heal" "$taste_file"
+      else
+        rm -f -- "$tmp_heal"
+        printf '[]\n' >"$taste_file"
+      fi
+    fi
+    now_t="$(date +%s)"
+    tmp="$DATA_DIR/taste.json.tmp"
+    jq -c --arg v "$vid" --arg t "$t_in" --arg a "$a_in" --argjson ts "$now_t" \
+      '. + [{v:$v,t:$t,a:$a,ts:$ts}] | if length > 2000 then .[-2000:] else . end' \
+      "$taste_file" >"$tmp" || exit 1
+    commit "$tmp" "$taste_file" || exit 1
+    printf 'taste-logged\n'
+    ;;
+  taste-profile)
+    require jq
+    taste_file="$DATA_DIR/taste.json"
+    lib_file="$LIB_FILE"
+    now_p="$(date +%s)"
+    taste_json="$(jq -c 'if type == "array" then . else [] end' "$taste_file" 2>/dev/null || printf '[]')"
+    lib_json="$(jq -c 'if type == "array" then . else [] end' "$lib_file" 2>/dev/null || printf '[]')"
+    [[ -n "$taste_json" ]] || taste_json='[]'
+    [[ -n "$lib_json" ]] || lib_json='[]'
+    jq -cn --argjson taste "$taste_json" --argjson lib "$lib_json" --argjson now "$now_p" '
+      ($taste | map(select(type == "object"))) as $t
+      | ($lib | map(select(type == "object"))) as $l
+      | ($t | map({k: ((.a // "" | tostring) | ascii_downcase), orig: (.a // "" | tostring), ts: (.ts // 0)}) | map(select(.k != ""))) as $norm
+      | ($l | map(((.artist // "" | tostring) | ascii_downcase)) | map(select(. != ""))) as $lnorm
+      | ($norm | map(.k) | unique) as $keys
+      | {artists: (
+          [$keys[] as $k
+            | ($norm | map(select(.k == $k))) as $rows
+            | ($rows | length) as $plays
+            | ($rows | map(.orig) | last) as $disp0
+            | ($rows | max_by(.ts // 0) | .orig // $disp0) as $disp
+            | ($rows | map((.ts | if type == "number" then . elif type == "string" then (tonumber? // 0) else 0 end) // 0) | max // 0) as $last
+            | ($lnorm | map(select(. == $k)) | length) as $loves
+            | (if ($now - $last) <= 604800 then 2 elif ($now - $last) <= 2592000 then 1 else 0 end) as $bonus
+            | {name: $disp, score: ($plays + 3 * $loves + $bonus), plays: $plays, loves: $loves}
+          ] | sort_by([-.score, -.plays, .name]) | .[0:20]
+        )}
+    '
+    ;;
+  foryou)
+    require curl; require jq
+    prune_cache
+    key="$CACHE_DIR/foryou.json"
+    now="$(date +%s)"
+    if [[ -s "$key" ]]; then
+      age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
+      if (( age < 3600 )); then cat "$key"; exit 0; fi
+    fi
+    taste_file="$DATA_DIR/taste.json"
+    lib_file="$LIB_FILE"
+    taste_json="$(jq -c 'if type == "array" then . else [] end' "$taste_file" 2>/dev/null || printf '[]')"
+    lib_json="$(jq -c 'if type == "array" then . else [] end' "$lib_file" 2>/dev/null || printf '[]')"
+    [[ -n "$taste_json" ]] || taste_json='[]'
+    [[ -n "$lib_json" ]] || lib_json='[]'
+    top3="$(jq -cnr --argjson taste "$taste_json" --argjson lib "$lib_json" --argjson now "$now" '
+      ($taste | map(select(type == "object"))) as $t
+      | ($lib | map(select(type == "object"))) as $l
+      | ($t | map({k: ((.a // "" | tostring) | ascii_downcase), orig: (.a // "" | tostring), ts: (.ts // 0)}) | map(select(.k != ""))) as $norm
+      | ($l | map(((.artist // "" | tostring) | ascii_downcase)) | map(select(. != ""))) as $lnorm
+      | ($norm | map(.k) | unique) as $keys
+      | ([$keys[] as $k
+          | ($norm | map(select(.k == $k))) as $rows
+          | ($rows | length) as $plays
+          | ($rows | max_by(.ts // 0) | .orig // ($rows | map(.orig) | last)) as $disp
+          | ($rows | map((.ts | if type == "number" then . elif type == "string" then (tonumber? // 0) else 0 end) // 0) | max // 0) as $last
+          | ($lnorm | map(select(. == $k)) | length) as $loves
+          | (if ($now - $last) <= 604800 then 2 elif ($now - $last) <= 2592000 then 1 else 0 end) as $bonus
+          | {name: $disp, score: ($plays + 3 * $loves + $bonus)}]
+        | sort_by(-.score) | .[0:3] | .[].name)
+    ' 2>/dev/null || true)"
+    if [[ -z "${top3//[[:space:]]/}" ]]; then
+      rss_fb="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+      ids_fb="$(jq -r '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | unique | .[0:30] | join(",")' <<<"$rss_fb" 2>/dev/null || true)"
+      [[ -n "$ids_fb" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
+      lookup_fb="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "id=$ids_fb" --data-urlencode "entity=song" -- "https://itunes.apple.com/lookup" 2>/dev/null || true)"
+      out="$(jq -c '[.results[]? | select(.wrapperType == "track") | {title: (.trackName // "Untitled"), artist: (.artistName // "Unknown"), art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100) | sub("100x100"; "300x300")) else "" end), url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end), kind: "chart", reason: "Trending now"}] | .[0:15]' <<<"$lookup_fb" 2>/dev/null || true)"
+      [[ -n "$out" && "$out" != "[]" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
+      tmp="$CACHE_DIR/foryou.json.tmp"
+      if printf '%s' "$out" >"$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+        commit "$tmp" "$key" || exit 1
+        cat -- "$key"
+      else
+        rm -f -- "$tmp"
+        printf 'Nothing here yet\n' >&2; exit 1
+      fi
+      exit 0
+    fi
+    excl_taste_json="$(jq -c '[.[]? | select(type == "object") | (.t // "" | tostring | ascii_downcase) | select(. != "")] | unique' <<<"$taste_json" 2>/dev/null || printf '[]')"
+    excl_lib_json="$(jq -c '[.[]? | select(type == "object") | (.title // "" | tostring | ascii_downcase) | select(. != "")] | unique' <<<"$lib_json" 2>/dev/null || printf '[]')"
+    [[ "$excl_taste_json" =~ ^\[ ]] || excl_taste_json="[]"
+    [[ "$excl_lib_json" =~ ^\[ ]] || excl_lib_json="[]"
+    mapfile -t artists <<<"$top3"
+    out_all="[]"
+    for artist in "${artists[@]}"; do
+      [[ -n "$artist" ]] || continue
+      json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$artist" --data-urlencode "media=music" --data-urlencode "entity=song" --data-urlencode "limit=15" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
+      [[ -n "$json" ]] || continue
+      rows="$(jq -c --arg an "$artist" --argjson et "$excl_taste_json" --argjson el "$excl_lib_json" '
+        [(.results[]? | {
+          title: (.trackName // "Untitled"),
+          artist: (.artistName // "Unknown"),
+          art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100) | sub("100x100"; "300x300")) else "" end),
+          url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end),
+          kind: "preview",
+          reason: ((("Because you love " + ($an | tostring | .[0:40] | gsub("[^ -~]"; ""))) | .[0:60]))
+        }) | select(.title != "" and .artist != "")
+          | select(((.title | ascii_downcase) as $lt | ($et | index($lt) == null) and ($el | index($lt) == null)))
+        ] | unique_by([(.title | ascii_downcase), (.artist | ascii_downcase)]) | .[0:6]
+      ' <<<"$json" 2>/dev/null || printf '[]')"
+      [[ -n "$rows" && "$rows" != "[]" ]] || continue
+      tmp_merge="$RUNTIME_DIR/foryou.merge.tmp"
+      if jq -c --argjson a "$out_all" --argjson b "$rows" -n '$a + $b' >"$tmp_merge" 2>/dev/null && [[ -s "$tmp_merge" ]]; then
+        out_all="$(cat -- "$tmp_merge")"
+        rm -f -- "$tmp_merge"
+      else
+        rm -f -- "$tmp_merge"
+      fi
+    done
+    final="$(jq -c '[.[] | {k: ([(.title | ascii_downcase), (.artist | ascii_downcase)] | join("\u0000")), v: .}] | reduce .[] as $e ([[], {}]; if .[1][$e.k] then . else [.[0] + [$e.v], .[1] + {($e.k): true}] end) | .[0] | .[0:18]' <<<"$out_all" 2>/dev/null || printf '')"
+    [[ -n "$final" && "$final" != "[]" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
+    tmp="$CACHE_DIR/foryou.json.tmp"
+    if printf '%s' "$final" >"$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+      commit "$tmp" "$key" || exit 1
+      cat -- "$key"
+    else
+      rm -f -- "$tmp"
+      printf 'Nothing here yet\n' >&2; exit 1
+    fi
+    ;;
+  artist-follow)
+    require jq
+    name="${2:-}"; art="${3:-}"
+    (( ${#name} >= 1 && ${#name} <= 100 )) || { printf 'bad artist name\n' >&2; exit 2; }
+    if [[ "$name" =~ [[:cntrl:]] ]]; then printf 'bad artist name\n' >&2; exit 2; fi
+    if [[ -n "$art" ]]; then
+      (( ${#art} <= 500 )) || { printf 'bad artist art\n' >&2; exit 2; }
+      [[ "$art" == https://* ]] || { printf 'bad artist art\n' >&2; exit 2; }
+      if [[ "$art" =~ [[:space:][:cntrl:]] ]]; then printf 'bad artist art\n' >&2; exit 2; fi
+    fi
+    afile="$DATA_DIR/artists.json"
+    [[ -e "$afile" ]] || printf '[]\n' >"$afile"
+    if ! jq -e 'type == "array"' "$afile" >/dev/null 2>&1; then
+      tmp_heal="$DATA_DIR/artists.json.heal.tmp"
+      if printf '[]\n' >"$tmp_heal" 2>/dev/null && [[ -s "$tmp_heal" ]]; then
+        mv -- "$tmp_heal" "$afile"
+      else
+        rm -f -- "$tmp_heal"
+        printf '[]\n' >"$afile"
+      fi
+    fi
+    now_a="$(date +%s)"
+    tmp="$DATA_DIR/artists.json.tmp"
+    jq -c --arg n "$name" --arg a "$art" --argjson ts "$now_a" '
+      map(select(type == "object"))
+      | map(select(((.name // "" | tostring | ascii_downcase) != ($n | ascii_downcase))))
+      + [{name: $n, art: $a, followedAt: $ts}]
+    ' "$afile" >"$tmp" || exit 1
+    commit "$tmp" "$afile" || exit 1
+    printf 'followed %s\n' "$name"
+    ;;
+  artist-unfollow)
+    require jq
+    name="${2:-}"
+    (( ${#name} >= 1 && ${#name} <= 100 )) || { printf 'bad artist name\n' >&2; exit 2; }
+    if [[ "$name" =~ [[:cntrl:]] ]]; then printf 'bad artist name\n' >&2; exit 2; fi
+    afile="$DATA_DIR/artists.json"
+    [[ -e "$afile" ]] || printf '[]\n' >"$afile"
+    if ! jq -e 'type == "array"' "$afile" >/dev/null 2>&1; then
+      tmp_heal="$DATA_DIR/artists.json.heal.tmp"
+      if printf '[]\n' >"$tmp_heal" 2>/dev/null && [[ -s "$tmp_heal" ]]; then
+        mv -- "$tmp_heal" "$afile"
+      else
+        rm -f -- "$tmp_heal"
+        printf '[]\n' >"$afile"
+      fi
+    fi
+    tmp="$DATA_DIR/artists.json.tmp"
+    jq -c --arg n "$name" '
+      map(select(type == "object"))
+      | map(select(((.name // "" | tostring | ascii_downcase) != ($n | ascii_downcase))))
+    ' "$afile" >"$tmp" || exit 1
+    commit "$tmp" "$afile" || exit 1
+    printf 'unfollowed\n'
+    ;;
+  artist-list)
+    require jq
+    afile="$DATA_DIR/artists.json"
+    [[ -e "$afile" ]] || { printf '[]\n'; exit 0; }
+    jq -c '[if type == "array" then .[] else empty end | select(type == "object") | {name: (.name // "" | tostring), art: (.art // "" | tostring), followedAt: (.followedAt // 0)}] | sort_by(.followedAt) | reverse' "$afile" 2>/dev/null || printf '[]\n'
+    ;;
+  artist-songs)
+    require curl; require jq
+    name="${2:-}"
+    (( ${#name} >= 1 && ${#name} <= 100 )) || { printf 'bad artist name\n' >&2; exit 2; }
+    if [[ "$name" =~ [[:cntrl:]] ]]; then printf 'bad artist name\n' >&2; exit 2; fi
+    prune_cache
+    json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$name" --data-urlencode "media=music" --data-urlencode "entity=song" --data-urlencode "limit=50" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
+    [[ -n "$json" ]] || { printf 'nothing found\n' >&2; exit 1; }
+    out="$(jq -c --arg q "$name" '
+      [(.results[]? | {
+        title: (.trackName // "Untitled"),
+        artist: (.artistName // "Unknown"),
+        art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100) | sub("100x100"; "300x300")) else "" end),
+        url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end),
+        kind: "preview"}) | select(.title != "" and .artist != "")]
+      | (map(select((.artist | ascii_downcase) == ($q | ascii_downcase))) + map(select((.artist | ascii_downcase) != ($q | ascii_downcase))))
+    ' <<<"$json" 2>/dev/null || true)"
+    [[ -n "$out" && "$out" != "[]" ]] || { printf 'nothing found\n' >&2; exit 1; }
+    printf '%s\n' "$out"
     ;;
   update-check)
     # update-check [stable|beta] (default beta). Read-only SHA compare. Never
@@ -1869,7 +2140,7 @@ case "${1:-}" in
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-songs NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
     exit 2
     ;;
 esac
