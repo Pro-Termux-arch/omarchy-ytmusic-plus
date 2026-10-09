@@ -170,7 +170,7 @@ BarWidget {
 
       Text {
         anchors.centerIn: parent
-        text: "󰒣"
+        text: "󰋋"
         color: root.foreground
         font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
         font.pixelSize: Style.font.iconLarge

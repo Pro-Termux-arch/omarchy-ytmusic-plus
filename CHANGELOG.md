@@ -1,13 +1,21 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **13** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable)
+Updates so far: **14** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1.3 stable (current)
+## v2.1.4 stable (current)
+
+> Bar idle icon is a proper music note now (it was silverware — dinner
+> is cancelled). Updater self-test release.
+
+- Idle/collapsed bar glyph U+F04A3 (fork + knife) → U+F02CB (music note)
+- No functional changes otherwise; exercises the self-finishing updater
+
+## v2.1.3 stable
 
 > Updates actually finish: after applying, the popup verifies the new UI
 > really loaded — manual updates reload the shell automatically when stale,
