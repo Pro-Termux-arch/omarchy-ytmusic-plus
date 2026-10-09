@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2 stable"
+  readonly property string appVersion: "v2.1 stable"
 
   property bool opened: false
   property bool searching: false
@@ -2087,6 +2087,8 @@ Item {
             width: Math.min(parent.width * 0.55, implicitWidth)
             horizontalAlignment: Text.AlignRight
             visible: (root.notice !== "" || root.errorMessage !== "")
+            opacity: visible ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
           }
         }
 
@@ -2940,6 +2942,7 @@ Item {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(4)
+            width: Math.min(implicitWidth, Style.space(150))
             clip: true
             Text {
               anchors.verticalCenter: parent.verticalCenter
@@ -2972,6 +2975,7 @@ Item {
               label: "Update"
               visible: root.updateAvailable && !root.updateChecking
               height: Style.space(18)
+              hPad: 12
               tapped: function() { root.applyUpdate() }
             }
           }
@@ -3133,7 +3137,8 @@ Item {
     id: sbtn
     property string label: "Go"
     property var tapped
-    width: sbtnLabel.width + Style.space(22)
+    property int hPad: 22
+    width: sbtnLabel.width + Style.space(hPad)
     height: Style.space(26)
     radius: height / 2
     color: sbtnHover.containsMouse ? root.accent : "transparent"
@@ -3261,22 +3266,22 @@ Item {
     height: btnSize
     radius: btnSize / 2
     transformOrigin: Item.Center
-    scale: btnHover.pressed ? 0.92 : 1.0
+    scale: btnHover.pressed ? 0.9 : (btnHover.containsMouse ? 1.07 : 1.0)
     color: primary
       ? (btnHover.containsMouse ? root.accent : "transparent")
       : (btnHover.containsMouse ? root.raised : "transparent")
     border.width: (primary || active) ? 2 : 1
     border.color: primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))
     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-    Behavior on color { ColorAnimation { duration: 120 } }
-    Behavior on border.color { ColorAnimation { duration: 120 } }
+    Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on border.color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
     Text {
       anchors.centerIn: parent
       text: tbtn.glyph
       color: (tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)
       font.family: root.iconFont
       font.pixelSize: tbtn.large ? Style.font.iconLarge : Style.font.bodySmall
-      Behavior on color { ColorAnimation { duration: 120 } }
+      Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
     }
     MouseArea {
       id: btnHover
@@ -3415,6 +3420,10 @@ Item {
     readonly property bool rowHovered: trackArea.containsMouse || mixArea.containsMouse || saveArea.containsMouse || listArea.containsMouse || dlArea.containsMouse
     readonly property bool isCurrent: trackRow.videoId === root.currentVideoId
     color: index === root.selectedIndex ? root.raised : (rowHovered ? root.raised : "transparent")
+    scale: trackArea.pressed ? 0.99 : 1.0
+    transformOrigin: Item.Center
+    Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
     Row {
       z: 2 // above trackArea (declared later) so the hover buttons get clicks
@@ -3454,25 +3463,29 @@ Item {
           Text {
             text: "󰀃"; color: mixArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
             scale: mixArea.containsMouse ? 1.12 : 1.0
-            Behavior on scale { NumberAnimation { duration: 120 } }
+            transformOrigin: Item.Center
+            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             MouseArea { id: mixArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.startMix(trackRow.videoId) }
           }
           Text {
             text: "󰣐"; color: saveArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
             scale: saveArea.containsMouse ? 1.12 : 1.0
-            Behavior on scale { NumberAnimation { duration: 120 } }
+            transformOrigin: Item.Center
+            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             MouseArea { id: saveArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.saveTrack(trackRow.index) }
           }
           Text {
             text: "+"; color: root.addTargetPlaylist ? root.accent : (listArea.containsMouse ? root.ink : root.muted); font.family: root.iconFont; font.pixelSize: Style.font.bodySmall; font.bold: true
             scale: listArea.containsMouse ? 1.12 : 1.0
-            Behavior on scale { NumberAnimation { duration: 120 } }
+            transformOrigin: Item.Center
+            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             MouseArea { id: listArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.addTrackToPlaylist(trackRow.index) }
           }
           Text {
             text: "󰇚"; color: dlArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
             scale: dlArea.containsMouse ? 1.12 : 1.0
-            Behavior on scale { NumberAnimation { duration: 120 } }
+            transformOrigin: Item.Center
+            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             MouseArea { id: dlArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.downloadTrack(trackRow.index) }
           }
         }

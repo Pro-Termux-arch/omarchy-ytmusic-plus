@@ -28,17 +28,40 @@ Item {
     Repeater {
       model: Math.max(0, Math.min(32, viz.bars))
       Rectangle {
+        id: barRect
         width: 3
-        height: viz.live
-          ? Math.max(2, Math.min(18, Math.round(viz.levelAt(index) / 100 * 18)))
-          : 2
+        property real targetLevel: viz.live ? viz.levelAt(index) : 0
+        property real displayLevel: 0
+        height: Math.max(2, Math.min(18, Math.round(displayLevel / 100 * 18)))
         radius: 1.5
         color: viz.live ? viz.barColor : viz.dimColor
         Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        opacity: viz.live ? 0.55 + viz.levelAt(index) / 100 * 0.45 : 1.0
+        opacity: viz.live ? (0.55 + 0.45 * Math.pow(displayLevel / 100, 0.65)) : 1.0
         anchors.verticalCenter: parent.verticalCenter
-        Behavior on height { NumberAnimation { duration: 90 + index * 12; easing.type: Easing.OutCubic } }
-        Behavior on opacity { NumberAnimation { duration: 90 + index * 12; easing.type: Easing.OutCubic } }
+        Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        NumberAnimation {
+          id: lvlAnim
+          target: barRect
+          property: "displayLevel"
+          easing.type: Easing.OutCubic
+        }
+        onTargetLevelChanged: {
+          if (displayLevel === targetLevel) return
+          lvlAnim.to = targetLevel
+          var rising = targetLevel > displayLevel
+          lvlAnim.duration = rising ? (110 + index * 3) : (380 + index * 2)
+          lvlAnim.restart()
+        }
+        Rectangle {
+          anchors.top: parent.top
+          anchors.horizontalCenter: parent.horizontalCenter
+          width: 3
+          height: 2
+          radius: 1.0
+          color: viz.barColor
+          opacity: viz.live ? Math.max(0, Math.min(0.9, (barRect.displayLevel - 72) / 28 * 0.9)) : 0
+          Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+        }
       }
     }
   }

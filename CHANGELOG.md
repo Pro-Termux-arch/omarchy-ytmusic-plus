@@ -1,13 +1,28 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **9** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable)
+Updates so far: **10** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2 stable (current)
+## v2.1 stable (current)
+
+> Updater --yes fix, cold-start play-button fix, footer clip, visualizer
+> fast-start + smooth attack, animation masterpiece, double security pass.
+
+- Beta updater appends --yes (was refusing without confirmation in popup)
+- Play button on cold start resumes saved queue position (was dead no-op)
+- Footer left cluster capped + clipped, Update button compacted (no credit overlap)
+- Visualizer starts instantly: immediate trigger on play, ytviz fast monitor
+  resolve + 8-frame ramp + attack smoothing (no 2s gap, no 0→100 pop)
+- VizBars smooth attack/release + peak glow; WaveBars buttery prime-staggered
+  shimmer; bar pill + transport + track rows polished
+- Security revised twice: atomic writes, input validation, arg arrays,
+  yt-dlp -- + https, curl --proto=https + caps — no flaws found
+
+## v2 stable
 
 > Promoted from v1.9 beta: cold-start off-by-one fix, footer updater with
 > 30-min auto-checks, stable/beta channels — plus Qt-proofing for the

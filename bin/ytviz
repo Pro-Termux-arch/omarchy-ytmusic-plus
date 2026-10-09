@@ -24,6 +24,15 @@ _MONITOR_RE = re.compile(r"^[A-Za-z0-9_.:-]+\.monitor$")
 # Silence timeout (s) for one audio chunk: a suspended/hung source must not
 # hang us forever in a blocking pipe read.
 READ_TIMEOUT = 5.0
+# Warm-start floor for adaptive peaks: 1e-9 made frame 1 mag/peak == 1 ->
+# 0dB -> v=100 (0->100 jump). 1.0 is a small realistic quiet-room floor
+# (white-noise sigma~32 => sigma^2/N ~ 1.0) so frame 1 cannot be 100 once
+# attack-smoothing + startup ramp are applied below.
+_PEAK_FLOOR = 1.0
+# Attack smoothing (fast attack kept) + startup ramp length. Release 0.82
+# preserved in main loop for fast-attack / slow-release character.
+_ATTACK_SMOOTH = 0.45
+_STARTUP_RAMP_FRAMES = 8
 # Precomputed Goertzel coefficients per band.
 _COEFFS = [2.0 * math.cos(2.0 * math.pi * f / RATE) for f in BANDS]
 
@@ -38,7 +47,7 @@ def default_monitor():
     # when enumeration itself failed) -> None (exit non-zero with clear stderr).
     try:
         default_sink = subprocess.check_output(
-            ["pactl", "get-default-sink"], text=True, timeout=5
+            ["pactl", "get-default-sink"], text=True, timeout=2
         ).strip() or None
     except Exception:
         default_sink = None
@@ -48,7 +57,7 @@ def default_monitor():
     listed = False
     try:
         out = subprocess.check_output(
-            ["pactl", "list", "short", "sources"], text=True, timeout=5
+            ["pactl", "list", "short", "sources"], text=True, timeout=2
         )
         listed = True
         for line in out.splitlines():
@@ -113,7 +122,7 @@ def main():
         sys.stderr.write("ytviz: pw-record failed: %s\n" % e)
         return 1
     frame_bytes = CHUNK * 2
-    peaks = [1e-9] * NBANDS
+    peaks = [_PEAK_FLOOR] * NBANDS
     disp = [0.0] * NBANDS
     lines = 0
     try:
@@ -139,13 +148,24 @@ def main():
                 if mag > peaks[b]:
                     peaks[b] = mag
                 else:
-                    peaks[b] *= 0.9995
+                    # Never decay below the realistic floor: after long
+                    # silence peaks must not sink back to ~0 and re-arm a
+                    # 0->100 jump on the next loud frame.
+                    peaks[b] = max(peaks[b] * 0.9995, _PEAK_FLOOR)
                 # -60dB floor -> 0, peak -> 100
                 db = 10.0 * math.log10(mag / (peaks[b] + 1e-12) + 1e-9)
                 v = max(0.0, min(100.0, (db + 60.0) * 100.0 / 60.0))
-                # fast attack, slow release
-                disp[b] = v if v > disp[b] else disp[b] * 0.82
-                out.append(str(int(disp[b])))
+                # fast attack (smoothed, no instant 0->100 jump), slow release
+                if v > disp[b]:
+                    disp[b] += (v - disp[b]) * _ATTACK_SMOOTH
+                else:
+                    disp[b] *= 0.82
+                # Startup ramp: frame 1 * 1/8, ..., frame 8+ * 1. Even a
+                # full-scale v=100 yields ~5 on frame 1 (45*0.125), rising
+                # smoothly to full scale by frame 8. Uses (lines+1) so the
+                # first frame is small-but-nonzero instead of all-zero.
+                ramp = min(1.0, (lines + 1) / float(_STARTUP_RAMP_FRAMES))
+                out.append(str(int(max(0.0, min(100.0, disp[b] * ramp)))))
             sys.stdout.write(" ".join(out) + "\n")
             sys.stdout.flush()
             lines += 1

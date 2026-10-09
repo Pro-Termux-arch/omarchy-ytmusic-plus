@@ -234,7 +234,7 @@ BarWidget {
           radius: width / 2
           color: root.themeAccent
           opacity: prevMouse.containsMouse ? 0.18 : 0
-          Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰒮"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
         MouseArea { id: prevMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("previous") }
@@ -254,7 +254,7 @@ BarWidget {
           radius: width / 2
           color: root.themeAccent
           opacity: playMouse.containsMouse ? 0.22 : 0
-          Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰏤"; color: root.themeAccent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
         Text { anchors.centerIn: parent; text: "󰐊"; color: root.themeAccent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
@@ -283,7 +283,7 @@ BarWidget {
           radius: width / 2
           color: root.themeAccent
           opacity: nextMouse.containsMouse ? 0.18 : 0
-          Behavior on opacity { NumberAnimation { duration: 190; easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         }
         Text { anchors.centerIn: parent; text: "󰒭"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
         MouseArea { id: nextMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
@@ -335,6 +335,22 @@ BarWidget {
     }
   }
 
+  function tryStartViz() {
+    if (!root.hasTrack || !root.playing) return
+    if (vizProc.running) return
+    var backoff = 0
+    if (root.vizFailCount > 0) {
+      var shift = Math.min(5, root.vizFailCount - 1)
+      backoff = Math.min(30000, 1500 * Math.pow(2, shift))
+    }
+    if (Date.now() - root.vizLastFailMs >= backoff) {
+      vizProc.command = [vizPath]
+      vizProc.running = true
+    }
+  }
+  onPlayingChanged: if (root.hasTrack && root.playing) root.tryStartViz()
+  onHasTrackChanged: if (root.hasTrack && root.playing) root.tryStartViz()
+
   Timer {
     interval: 1500
     running: true
@@ -350,17 +366,7 @@ BarWidget {
         if (root.vizFailCount !== 0) root.vizFailCount = 0
         return
       }
-      if (!vizProc.running) {
-        var backoff = 0
-        if (root.vizFailCount > 0) {
-          var shift = Math.min(5, root.vizFailCount - 1)
-          backoff = Math.min(30000, 1500 * Math.pow(2, shift))
-        }
-        if (Date.now() - root.vizLastFailMs >= backoff) {
-          vizProc.command = [vizPath]
-          vizProc.running = true
-        }
-      }
+      root.tryStartViz()
     }
   }
 

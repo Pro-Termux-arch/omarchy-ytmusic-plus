@@ -29,22 +29,22 @@ Item {
       model: Math.max(0, Math.min(12, wb.bars))
       Rectangle {
         width: 3
-        height: 12
+        height: 4 + (index * 7) % 9
         radius: 1.5
         color: wb.barColor
-        opacity: 0.85
+        opacity: 0.70 + (index % 3) * 0.12
         anchors.verticalCenter: parent.verticalCenter
         SequentialAnimation on height {
           running: wb.active && wb.visible
           loops: Animation.Infinite
-          NumberAnimation { to: 4; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
-          NumberAnimation { to: 12; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 4; duration: [397, 449, 503, 557, 613, 659, 719, 773, 829, 883, 941, 997][index]; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 12; duration: [397, 449, 503, 557, 613, 659, 719, 773, 829, 883, 941, 997][index]; easing.type: Easing.InOutSine }
         }
         SequentialAnimation on opacity {
           running: wb.active && wb.visible
           loops: Animation.Infinite
-          NumberAnimation { to: 0.55; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
-          NumberAnimation { to: 1.0; duration: [379, 431, 479, 523, 577, 631, 683, 733, 787, 839, 881, 937][index]; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 0.55; duration: [397, 449, 503, 557, 613, 659, 719, 773, 829, 883, 941, 997][index]; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 1.0; duration: [397, 449, 503, 557, 613, 659, 719, 773, 829, 883, 941, 997][index]; easing.type: Easing.InOutSine }
         }
       }
     }

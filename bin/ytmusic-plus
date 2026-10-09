@@ -863,18 +863,41 @@ case "${1:-}" in
     start_index "$((current - 1))"
     ;;
   toggle)
-    require socat
-    ipc '{"command":["cycle","pause"]}' >/dev/null || true
-    # Re-sync promptly: QML flips `playing` optimistically and relies on the
-    # next status poll. Give mpv a moment to apply the pause flip, then probe
-    # so a dead socket is cleaned now (next status is running:false, not
-    # empty). Stdout stays empty (existing contract).
-    sleep 0.1
-    if [[ -S "$SOCKET" ]]; then
-      if ! printf '%s\n' '{"command":["get_property","pause"],"request_id":1}' \
-        | socat -T 0.4 - "UNIX-CONNECT:$SOCKET" 2>/dev/null | grep -q .; then
-        rm -f -- "$SOCKET" "$PID_FILE"
+    require socat; require jq
+    # Cold-start fix (#3): cycle-pause on a dead/missing socket is a no-op
+    # while QML flips `playing` optimistically. Probe liveness FIRST: the
+    # socket file must exist AND answer an IPC round-trip. Dead → resume
+    # the saved queue position via start_index (no mpv spawn duplication);
+    # empty/missing queue → stderr + exit 1. Live → normal pause toggle.
+    if [[ -S "$SOCKET" ]] && printf '%s\n' '{"command":["get_property","pause"],"request_id":1}' \
+      | socat -T 0.4 - "UNIX-CONNECT:$SOCKET" 2>/dev/null | grep -q .; then
+      ipc '{"command":["cycle","pause"]}' >/dev/null || true
+      # Re-sync promptly: QML flips `playing` optimistically and relies on the
+      # next status poll. Give mpv a moment to apply the pause flip, then probe
+      # so a dead socket is cleaned now (next status is running:false, not
+      # empty). Stdout stays empty (existing contract).
+      sleep 0.1
+      if [[ -S "$SOCKET" ]]; then
+        if ! printf '%s\n' '{"command":["get_property","pause"],"request_id":1}' \
+          | socat -T 0.4 - "UNIX-CONNECT:$SOCKET" 2>/dev/null | grep -q .; then
+          rm -f -- "$SOCKET" "$PID_FILE"
+        fi
       fi
+    else
+      # Stale socket file lingers after a crash: drop it so the relaunch
+      # below (via kill_old_mpv in launch_*) starts clean. Harmless when absent.
+      if [[ -S "$SOCKET" ]]; then rm -f -- "$SOCKET" "$PID_FILE"; fi
+      qlen_t="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+      [[ "$qlen_t" =~ ^[0-9]+$ ]] || qlen_t=0
+      if (( qlen_t == 0 )); then
+        printf 'toggle: queue is empty (nothing to play)\n' >&2
+        exit 1
+      fi
+      sidx_t="$(jq -r '.index // empty' "$STATE_FILE" 2>/dev/null || printf '')"
+      [[ "$sidx_t" =~ ^-?[0-9]+$ ]] || sidx_t=0
+      (( sidx_t < 0 )) && sidx_t=0
+      (( sidx_t >= qlen_t )) && sidx_t=$((qlen_t - 1))
+      start_index "$sidx_t"
     fi
     ;;
   pause)
@@ -1703,9 +1726,9 @@ case "${1:-}" in
     fi
     if [[ "$upd_channel" == beta ]]; then
       if command -v timeout >/dev/null 2>&1; then
-        upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus)
+        upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus --yes)
       else
-        upd_cmd=(omarchy plugin update local.ytmusic-plus)
+        upd_cmd=(omarchy plugin update local.ytmusic-plus --yes)
       fi
       if "${upd_cmd[@]}"; then
         upd_rc=0
