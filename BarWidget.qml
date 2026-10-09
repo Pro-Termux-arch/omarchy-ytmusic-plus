@@ -178,29 +178,49 @@ BarWidget {
     }
 
     Row {
+      id: pillRow
       anchors.fill: parent
-      anchors.margins: Style.space(2)
+      anchors.leftMargin: 0
+      anchors.topMargin: 0
+      anchors.bottomMargin: 0
+      anchors.rightMargin: Style.space(2)
       spacing: Style.space(3)
       visible: root.hasTrack && !root.idleHidden
       opacity: (root.hasTrack && !root.idleHidden) ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
       Rectangle {
+        id: posterBox
         width: parent.height
         height: parent.height
-        radius: Style.space(4)
+        radius: Style.space(6)
+        topLeftRadius: Style.space(6)
+        bottomLeftRadius: Style.space(6)
+        topRightRadius: 0
+        bottomRightRadius: 0
         color: root.themeBarBackground
         clip: true
-        Image { anchors.fill: parent; source: root.thumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true }
-        MouseArea {
+        scale: posterHover.containsMouse ? 1.08 : 1.0
+        transformOrigin: Item.Center
+        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        Image {
           anchors.fill: parent
+          source: root.thumbnail
+          fillMode: Image.PreserveAspectCrop
+          asynchronous: true
+          sourceSize: Qt.size(192, 192)
+        }
+        MouseArea {
+          id: posterHover
+          anchors.fill: parent
+          hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onClicked: root.openPlayer()
         }
       }
 
       Marquee {
-        width: Style.space(44)
+        width: Math.max(Style.space(30), parent.width - parent.height - Style.space(64) - Style.space(20) - Style.space(22) - Style.space(20) - parent.spacing * 5 - Style.space(2))
         anchors.verticalCenter: parent.verticalCenter
         text: root.title
         textColor: root.foreground
@@ -215,7 +235,7 @@ BarWidget {
       }
 
       VizBars {
-        width: Style.space(52)
+        width: Style.space(64)
         anchors.verticalCenter: parent.verticalCenter
         levels: root.vizLevels
         barColor: root.themeAccent
@@ -287,6 +307,43 @@ BarWidget {
         }
         Text { anchors.centerIn: parent; text: "󰒭"; color: root.foreground; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall }
         MouseArea { id: nextMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.runAction("next") }
+      }
+    }
+
+    // Poster hover ART CARD: 96px preview above the pill. Shadow is a plain
+    // darker rect (no new imports/effects). If the shell clips overflow the
+    // card hides and the in-place poster scale still signals hover.
+    Item {
+      id: posterCard
+      z: 100
+      width: Style.space(96)
+      height: Style.space(96)
+      x: 0
+      y: -height - Style.space(6)
+      visible: posterHover.containsMouse && root.thumbnail !== ""
+      Rectangle {
+        x: 2
+        y: 3
+        width: parent.width
+        height: parent.height
+        radius: Style.space(8)
+        color: "black"
+        opacity: 0.45
+      }
+      Rectangle {
+        anchors.fill: parent
+        radius: Style.space(8)
+        color: root.themeBarBackground
+        border.width: 1
+        border.color: root.themePopupsBorder
+        clip: true
+        Image {
+          anchors.fill: parent
+          source: root.thumbnail
+          fillMode: Image.PreserveAspectCrop
+          asynchronous: true
+          sourceSize: Qt.size(192, 192)
+        }
       }
     }
   }
