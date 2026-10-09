@@ -40,8 +40,9 @@ BarWidget {
   property double vizLastFailMs: 0
   property double lastActiveMs: 0
   property bool idleHidden: false
+  property string barMode: "full"
 
-  implicitWidth: (root.hasTrack && !root.idleHidden) ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : Style.space(30)
+  implicitWidth: root.barMode === "compact" ? (typeof barSize !== "undefined" ? barSize : Style.space(30)) : ((root.hasTrack && !root.idleHidden) ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : Style.space(30))
   implicitHeight: barSize
   Behavior on implicitWidth { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
@@ -95,6 +96,7 @@ BarWidget {
   function applyStatus(raw) {
     try {
       var status = JSON.parse(String(raw || "{}"))
+      root.barMode = (status.barMode === "compact") ? "compact" : "full"
       root.playerRunning = status.running === true
       root.playing = root.playerRunning && status.paused !== true
       var newTitle = String(status.title || "").slice(0, 500)
@@ -121,6 +123,7 @@ BarWidget {
 
   Rectangle {
     id: pillBg
+    visible: root.barMode !== "compact"
     anchors.centerIn: parent
     width: parent.width
     height: Math.max(Style.space(24), parent.height - Style.space(8))
@@ -161,9 +164,9 @@ BarWidget {
 
     Item {
       anchors.fill: parent
-      visible: !root.hasTrack || root.idleHidden
-      opacity: (!root.hasTrack || root.idleHidden) ? 1 : 0
-      scale: (!root.hasTrack || root.idleHidden) ? 1 : 0.85
+      visible: (!root.hasTrack || root.idleHidden) && root.barMode !== "compact"
+      opacity: ((!root.hasTrack || root.idleHidden) && root.barMode !== "compact") ? 1 : 0
+      scale: ((!root.hasTrack || root.idleHidden) && root.barMode !== "compact") ? 1 : 0.85
       transformOrigin: Item.Center
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
       Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
@@ -187,8 +190,8 @@ BarWidget {
       anchors.bottomMargin: Style.space(2)
       width: childrenRect.width
       spacing: Style.space(3)
-      visible: root.hasTrack && !root.idleHidden
-      opacity: (root.hasTrack && !root.idleHidden) ? 1 : 0
+      visible: root.hasTrack && !root.idleHidden && root.barMode !== "compact"
+      opacity: (root.hasTrack && !root.idleHidden && root.barMode !== "compact") ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
       Rectangle {
@@ -322,7 +325,7 @@ BarWidget {
       height: Style.space(96)
       x: 0
       y: -height - Style.space(6)
-      visible: posterHover.containsMouse && root.thumbnail !== ""
+      visible: posterHover.containsMouse && root.thumbnail !== "" && root.barMode !== "compact"
       Rectangle {
         x: 2
         y: 3
@@ -347,6 +350,51 @@ BarWidget {
           sourceSize: Qt.size(192, 192)
         }
       }
+    }
+  }
+
+  // Compact bar: icon-square footprint (omarchy icon style, no pill).
+  // idle/no-track -> music-note; playing -> mini WaveBars; paused -> pause glyph.
+  Item {
+    id: compactBox
+    anchors.fill: parent
+    visible: root.barMode === "compact"
+    Rectangle {
+      anchors.fill: parent
+      color: root.themeAccent
+      opacity: compactMouse.containsMouse ? 0.12 : 0
+      Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    }
+    Text {
+      anchors.centerIn: parent
+      visible: !root.hasTrack || root.idleHidden
+      text: String.fromCharCode(0xF02CB)
+      color: root.foreground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
+      font.pixelSize: Style.font.iconLarge
+    }
+    WaveBars {
+      anchors.centerIn: parent
+      visible: root.hasTrack && !root.idleHidden && root.playing
+      bars: 3
+      width: Style.space(18)
+      barColor: root.themeAccent
+      active: true
+    }
+    Text {
+      anchors.centerIn: parent
+      visible: root.hasTrack && !root.idleHidden && !root.playing
+      text: String.fromCharCode(0xF03E4)
+      color: root.foreground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
+      font.pixelSize: Style.font.iconLarge
+    }
+    MouseArea {
+      id: compactMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.openPlayer()
     }
   }
 

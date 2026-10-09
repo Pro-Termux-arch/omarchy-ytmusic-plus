@@ -69,7 +69,7 @@ commit() {
 # (including 450ms status polls), so it must NEVER rewrite the file when all
 # keys are present — an unconditional rewrite raced with `set` and silently
 # reverted the user's change within a second (the "settings don't stick" bug).
-SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta"}'
+SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta","barmode":"full","seekstyle":"default"}'
 if [[ -e "$SETTINGS_FILE" ]]; then
   if ! jq -e --argjson d "$SETTINGS_DEFAULTS" '($d | keys_unsorted) - (keys_unsorted) | length == 0' "$SETTINGS_FILE" >/dev/null 2>&1; then
     tmp_s="$RUNTIME_DIR/settings.merge.tmp"
@@ -931,6 +931,7 @@ case "${1:-}" in
   status)
     require jq
     loop_mode="$(sget loop)"; [[ "$loop_mode" == all || "$loop_mode" == one ]] || loop_mode=off
+    barMode="$(sget barmode)"; [[ "$barMode" == full || "$barMode" == compact ]] || barMode=full
     silence_on="false"; [[ "$(sget silence)" == on ]] && silence_on="true"
     norm_on="false"; [[ "$(sget normalize)" == on ]] && norm_on="true"
     sleep_until=0; [[ -r "$SLEEP_FILE" ]] && sleep_until="$(<"$SLEEP_FILE")"
@@ -942,12 +943,14 @@ case "${1:-}" in
         jq -c --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
           --argjson silence "$silence_on" --argjson normalize "$norm_on" \
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
-          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}' "$STATE_FILE"
+          --arg barMode "$barMode" \
+          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode}' "$STATE_FILE"
       else
         jq -cn --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
           --argjson silence "$silence_on" --argjson normalize "$norm_on" \
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
-          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}'
+          --arg barMode "$barMode" \
+          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode}'
       fi
       exit 0
     fi
@@ -966,31 +969,34 @@ case "${1:-}" in
         jq -c --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
           --argjson silence "$silence_on" --argjson normalize "$norm_on" \
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
-          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}' "$STATE_FILE"
+          --arg barMode "$barMode" \
+          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode}' "$STATE_FILE"
       else
         jq -cn --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
           --argjson silence "$silence_on" --argjson normalize "$norm_on" \
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
-          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}'
+          --arg barMode "$barMode" \
+          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode}'
       fi
       exit 0
     fi
     if [[ -s "$STATE_FILE" ]]; then
       jq -sc --slurpfile track "$STATE_FILE" --slurpfile queue "$QUEUE_FILE" \
         --arg loop "$loop_mode" --argjson silence "$silence_on" --argjson normalize "$norm_on" \
-        --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" '($track[0] // {}) + {
+        --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" --arg barMode "$barMode" '($track[0] // {}) + {
         running:true,
         paused:((map(select(.request_id == 1))[0].data) // false),
         position:((map(select(.request_id == 2))[0].data) // 0),
         playbackDuration:((map(select(.request_id == 3))[0].data) // 0),
         queue:($queue[0] // []),
         loop:$loop, silence:$silence, normalize:$normalize,
-        sleepUntil:$sleepUntil, sleepMode:$sleepMode
+        sleepUntil:$sleepUntil, sleepMode:$sleepMode, barMode:$barMode
       }' <<<"$responses"
     else
       jq -sc --arg loop "$loop_mode" --argjson silence "$silence_on" --argjson normalize "$norm_on" \
         --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
-        '{running:true,paused:((map(select(.request_id == 1))[0].data)//false),position:((map(select(.request_id == 2))[0].data)//0),playbackDuration:((map(select(.request_id == 3))[0].data)//0),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode}' <<<"$responses"
+        --arg barMode "$barMode" \
+        '{running:true,paused:((map(select(.request_id == 1))[0].data)//false),position:((map(select(.request_id == 2))[0].data)//0),playbackDuration:((map(select(.request_id == 3))[0].data)//0),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode}' <<<"$responses"
     fi
     ;;
   # ---- saves: library (liked tracks) --------------------------------------
@@ -1240,6 +1246,10 @@ case "${1:-}" in
         [[ "$val" == off || "$val" =~ ^[0-9]+$ ]] || { printf 'update_last_check must be off|epoch-seconds\n' >&2; exit 2; } ;;
       update_channel)
         [[ "$val" == stable || "$val" == beta ]] || { printf 'update_channel must be stable|beta\n' >&2; exit 2; } ;;
+      barmode)
+        [[ "$val" == full || "$val" == compact ]] || { printf 'barmode must be full|compact\n' >&2; exit 2; } ;;
+      seekstyle)
+        [[ "$val" == default || "$val" == wave || "$val" == lightning || "$val" == spiral || "$val" == dots ]] || { printf 'seekstyle must be default|wave|lightning|spiral|dots\n' >&2; exit 2; } ;;
       eqPreset)
         eq_preset_gains "$val" >/dev/null || { printf 'unknown eq preset\n' >&2; exit 2; } ;;
       eqGains)

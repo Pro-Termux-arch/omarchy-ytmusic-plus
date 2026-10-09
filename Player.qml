@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.2.4 beta"
+  readonly property string appVersion: "v2.2.5 beta"
 
   property bool opened: false
   property bool searching: false
@@ -122,6 +122,7 @@ Item {
   property real position: 0
   property real playbackDuration: 0
   property bool showRemaining: false // time labels: elapsed vs remaining
+  property string seekStyle: "default"
   property alias searchInput: searchField
   property var closeCallback: null
   property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
@@ -926,6 +927,8 @@ Item {
       var lim = Number(s.searchLimit) || 12
       setSearchLimit = (lim === 8 || lim === 20) ? lim : 12
       setDlQuality = s.dlQuality === "compact" ? "compact" : "best"
+      var sst = String(s.seekstyle || "default")
+      seekStyle = (sst === "default" || sst === "wave" || sst === "lightning" || sst === "spiral" || sst === "dots") ? sst : "default"
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
       var uch = String(s.update_channel || "beta")
@@ -2386,8 +2389,22 @@ Item {
                       var waveLen = 16
                       var phase = Date.now() / 900
                       var css = function(c, a) { return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + a + ")" }
+                      var playedCss = css(root.accent, 1)
+                      var restCss = css(root.muted, 0.4)
+                      var st = root.seekStyle
+                      if (st !== "default" && st !== "wave" && st !== "lightning" && st !== "spiral" && st !== "dots") st = "default"
+                      var ratio = Math.min(1, root.position / Math.max(1, root.playbackDuration))
+                      var splitX = Math.max(0, Math.min(w, ratio * w))
+                      var dotR = (seekHover.containsMouse || seekHover.pressed) ? 5 : 4
+                      var live = !(root.playbackDuration > 0)
                       var waveY = function(x) { return midY + amp * Math.sin((x / waveLen) * 2 * Math.PI + phase) }
-                      var strokeRange = function(x0, x1, style) {
+                      var triY = function(x) {
+                        var p = ((x / waveLen) + phase / (2 * Math.PI)) % 1
+                        if (p < 0) p += 1
+                        var t = p < 0.5 ? (p * 4 - 1) : (3 - p * 4)
+                        return midY + amp * t
+                      }
+                      var strokeWave = function(x0, x1, style) {
                         if (x1 <= x0) return
                         ctx.strokeStyle = style
                         ctx.lineWidth = 2
@@ -2401,21 +2418,113 @@ Item {
                         ctx.lineTo(x1, waveY(x1))
                         ctx.stroke()
                       }
-                      var playedCss = css(root.accent, 1)
-                      var restCss = css(root.muted, 0.4)
-                      if (!(root.playbackDuration > 0)) {
-                        strokeRange(0, w, restCss)
+                      var strokeTri = function(x0, x1, style) {
+                        if (x1 <= x0) return
+                        ctx.strokeStyle = style
+                        ctx.lineWidth = 2
+                        ctx.lineCap = "round"
+                        ctx.lineJoin = "round"
+                        ctx.beginPath()
+                        var x = x0
+                        ctx.moveTo(x, triY(x))
+                        x += 2
+                        while (x < x1) { ctx.lineTo(x, triY(x)); x += 2 }
+                        ctx.lineTo(x1, triY(x1))
+                        ctx.stroke()
+                      }
+                      if (st === "default") {
+                        ctx.lineCap = "round"
+                        ctx.strokeStyle = restCss
+                        ctx.lineWidth = 4
+                        ctx.beginPath()
+                        ctx.moveTo(0, midY)
+                        ctx.lineTo(w, midY)
+                        ctx.stroke()
+                        if (!live) {
+                          if (splitX > 0) {
+                            ctx.strokeStyle = playedCss
+                            ctx.lineWidth = 4
+                            ctx.beginPath()
+                            ctx.moveTo(0, midY)
+                            ctx.lineTo(splitX, midY)
+                            ctx.stroke()
+                          }
+                          ctx.fillStyle = playedCss
+                          ctx.beginPath()
+                          ctx.arc(splitX, midY, dotR, 0, 2 * Math.PI)
+                          ctx.fill()
+                        }
                         return
                       }
-                      var ratio = Math.min(1, root.position / Math.max(1, root.playbackDuration))
-                      var splitX = Math.max(0, Math.min(w, ratio * w))
-                      strokeRange(0, splitX, playedCss)
-                      strokeRange(splitX, w, restCss)
-                      var dotR = (seekHover.containsMouse || seekHover.pressed) ? 5 : 4
-                      ctx.fillStyle = playedCss
-                      ctx.beginPath()
-                      ctx.arc(splitX, waveY(splitX), dotR, 0, 2 * Math.PI)
-                      ctx.fill()
+                      if (st === "wave") {
+                        if (live) { strokeWave(0, w, restCss); return }
+                        strokeWave(0, splitX, playedCss)
+                        strokeWave(splitX, w, restCss)
+                        ctx.fillStyle = playedCss
+                        ctx.beginPath()
+                        ctx.arc(splitX, waveY(splitX), dotR, 0, 2 * Math.PI)
+                        ctx.fill()
+                        return
+                      }
+                      if (st === "lightning") {
+                        if (live) { strokeTri(0, w, restCss); return }
+                        strokeTri(0, splitX, playedCss)
+                        strokeTri(splitX, w, restCss)
+                        ctx.fillStyle = playedCss
+                        ctx.beginPath()
+                        ctx.arc(splitX, triY(splitX), dotR, 0, 2 * Math.PI)
+                        ctx.fill()
+                        return
+                      }
+                      if (st === "spiral") {
+                        ctx.strokeStyle = restCss
+                        ctx.lineWidth = 2
+                        ctx.lineCap = "round"
+                        ctx.beginPath()
+                        ctx.moveTo(0, midY)
+                        ctx.lineTo(w, midY)
+                        ctx.stroke()
+                        if (live) return
+                        var turns = 2.5
+                        var maxR = 6
+                        var steps = 48
+                        ctx.strokeStyle = playedCss
+                        ctx.lineWidth = 2
+                        ctx.beginPath()
+                        for (var i = 0; i <= steps; i++) {
+                          var th = (i / steps) * turns * 2 * Math.PI
+                          var rr = maxR * (i / steps)
+                          var sx = splitX + rr * Math.cos(th)
+                          var sy = midY + rr * Math.sin(th) * 0.8
+                          if (i === 0) ctx.moveTo(sx, sy)
+                          else ctx.lineTo(sx, sy)
+                        }
+                        ctx.stroke()
+                        ctx.fillStyle = playedCss
+                        ctx.beginPath()
+                        ctx.arc(splitX, midY, dotR, 0, 2 * Math.PI)
+                        ctx.fill()
+                        return
+                      }
+                      if (st === "dots") {
+                        var N = 24
+                        for (var d = 0; d < N; d++) {
+                          var dx = (d + 0.5) / N * w
+                          var played = (!live) && (dx <= splitX)
+                          var dr = 1.5
+                          if (played) {
+                            var tt = splitX > 0 ? (dx / splitX) : 0
+                            dr = 1.5 + 2.5 * tt
+                            ctx.fillStyle = playedCss
+                          } else {
+                            ctx.fillStyle = restCss
+                          }
+                          ctx.beginPath()
+                          ctx.arc(dx, midY, dr, 0, 2 * Math.PI)
+                          ctx.fill()
+                        }
+                        return
+                      }
                     }
                   }
                   Timer {
@@ -2430,6 +2539,7 @@ Item {
                     function onPositionChanged() { waveCanvas.requestPaint() }
                     function onPlayingChanged() { waveCanvas.requestPaint() }
                     function onPlaybackDurationChanged() { waveCanvas.requestPaint() }
+                    function onSeekStyleChanged() { waveCanvas.requestPaint() }
                   }
                   Connections {
                     target: seekHover
@@ -3721,6 +3831,176 @@ Item {
                   labels: ["Off", "All", "One"]
                   current: root.loopMode
                   picked: function(v) { root.loopMode = v; root.runCmd(["loop", v]) }
+                }
+              }
+              Item {
+                width: parent.width
+                height: Style.space(58)
+                Column {
+                  width: parent.width
+                  spacing: Style.space(4)
+                  Text {
+                    text: "Seekbar style"
+                    textFormat: Text.PlainText
+                    color: root.ink
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+                  Row {
+                    spacing: Style.space(4)
+                    Repeater {
+                      model: ["default", "wave", "lightning", "spiral", "dots"]
+                      delegate: Rectangle {
+                        width: 70
+                        height: 38
+                        radius: 6
+                        color: "transparent"
+                        border.width: 1
+                        border.color: root.seekStyle === modelData ? root.accent : root.muted
+                        Column {
+                          anchors.centerIn: parent
+                          spacing: 1
+                          Canvas {
+                            width: 64
+                            height: 20
+                            onWidthChanged: requestPaint()
+                            Component.onCompleted: requestPaint()
+                            onPaint: {
+                              var ctx = getContext("2d")
+                              var w = width
+                              var h = height
+                              ctx.clearRect(0, 0, w, h)
+                              if (w <= 0 || h <= 0) return
+                              var midY = h / 2
+                              var amp = 4
+                              var waveLen = 16
+                              var phase = 1.2
+                              var css = function(c, a) { return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + a + ")" }
+                              var playedCss = css(root.accent, 1)
+                              var restCss = css(root.muted, 0.4)
+                              var splitX = 0.35 * w
+                              var kind = modelData
+                              var waveY = function(x) { return midY + amp * Math.sin((x / waveLen) * 2 * Math.PI + phase) }
+                              var triY = function(x) {
+                                var p = ((x / waveLen) + phase / (2 * Math.PI)) % 1
+                                if (p < 0) p += 1
+                                var t = p < 0.5 ? (p * 4 - 1) : (3 - p * 4)
+                                return midY + amp * t
+                              }
+                              if (kind === "default") {
+                                ctx.lineCap = "round"
+                                ctx.strokeStyle = restCss
+                                ctx.lineWidth = 4
+                                ctx.beginPath()
+                                ctx.moveTo(0, midY)
+                                ctx.lineTo(w, midY)
+                                ctx.stroke()
+                                ctx.strokeStyle = playedCss
+                                ctx.lineWidth = 4
+                                ctx.beginPath()
+                                ctx.moveTo(0, midY)
+                                ctx.lineTo(splitX, midY)
+                                ctx.stroke()
+                                ctx.fillStyle = playedCss
+                                ctx.beginPath()
+                                ctx.arc(splitX, midY, 3, 0, 2 * Math.PI)
+                                ctx.fill()
+                                return
+                              }
+                              if (kind === "wave" || kind === "lightning") {
+                                var yf = kind === "wave" ? waveY : triY
+                                var seg = function(x0, x1, style) {
+                                  if (x1 <= x0) return
+                                  ctx.strokeStyle = style
+                                  ctx.lineWidth = 2
+                                  ctx.lineCap = "round"
+                                  ctx.lineJoin = "round"
+                                  ctx.beginPath()
+                                  var x = x0
+                                  ctx.moveTo(x, yf(x))
+                                  x += 2
+                                  while (x < x1) { ctx.lineTo(x, yf(x)); x += 2 }
+                                  ctx.lineTo(x1, yf(x1))
+                                  ctx.stroke()
+                                }
+                                seg(0, splitX, playedCss)
+                                seg(splitX, w, restCss)
+                                ctx.fillStyle = playedCss
+                                ctx.beginPath()
+                                ctx.arc(splitX, yf(splitX), 3, 0, 2 * Math.PI)
+                                ctx.fill()
+                                return
+                              }
+                              if (kind === "spiral") {
+                                ctx.strokeStyle = restCss
+                                ctx.lineWidth = 2
+                                ctx.lineCap = "round"
+                                ctx.beginPath()
+                                ctx.moveTo(0, midY)
+                                ctx.lineTo(w, midY)
+                                ctx.stroke()
+                                var turns = 2.5
+                                var maxR = 6
+                                var steps = 32
+                                ctx.strokeStyle = playedCss
+                                ctx.lineWidth = 2
+                                ctx.beginPath()
+                                for (var i = 0; i <= steps; i++) {
+                                  var th = (i / steps) * turns * 2 * Math.PI
+                                  var rr = maxR * (i / steps)
+                                  var sx = splitX + rr * Math.cos(th)
+                                  var sy = midY + rr * Math.sin(th) * 0.8
+                                  if (i === 0) ctx.moveTo(sx, sy)
+                                  else ctx.lineTo(sx, sy)
+                                }
+                                ctx.stroke()
+                                ctx.fillStyle = playedCss
+                                ctx.beginPath()
+                                ctx.arc(splitX, midY, 3, 0, 2 * Math.PI)
+                                ctx.fill()
+                                return
+                              }
+                              var N = 24
+                              for (var d = 0; d < N; d++) {
+                                var dx = (d + 0.5) / N * w
+                                var isPlayed = dx <= splitX
+                                var dr = 1.5
+                                if (isPlayed) {
+                                  dr = 1.5 + 2.5 * (dx / splitX)
+                                  ctx.fillStyle = playedCss
+                                } else {
+                                  ctx.fillStyle = restCss
+                                }
+                                ctx.beginPath()
+                                ctx.arc(dx, midY, dr, 0, 2 * Math.PI)
+                                ctx.fill()
+                              }
+                            }
+                          }
+                          Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: modelData
+                            textFormat: Text.PlainText
+                            color: root.muted
+                            font.family: root.uiFont
+                            font.pixelSize: Style.font.caption
+                          }
+                        }
+                        MouseArea {
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: {
+                            root.seekStyle = modelData
+                            root.saveSetting("seekstyle", modelData)
+                            root.notice = "Seekbar: " + modelData
+                            noticeTimer.restart()
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
 
