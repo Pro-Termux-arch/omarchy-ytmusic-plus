@@ -1,11 +1,23 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **26** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta)
+Updates so far: **27** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
+
+## v2.2.7 beta
+
+> Choice + help: font presets, hover-help mode, transport mix removed.
+> Local-only beta. (Player glyph baseline 15→14: mix glyph deleted.)
+
+- Font presets (Noto Sans/Serif, Liberation Sans/Serif, JetBrains Mono,
+  Omarchy system) with self-rendering chips + existing custom-file flow;
+  backend font-presets for agents/scripts
+- Help ?: toggles 3s hover-tips on every button (transport included),
+  snappy defaults otherwise
+- Transport mix-station icon removed (row-level + auto-mix stay)
 
 ## v2.2.6 beta
 

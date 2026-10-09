@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.2.6 beta"
+  readonly property string appVersion: "v2.2.7 beta"
 
   property bool opened: false
   property bool searching: false
@@ -125,6 +125,7 @@ Item {
   property string seekStyle: "default"
   property real wavePhase: 0
   property bool vizOn: true
+  property bool helpMode: false
   NumberAnimation on wavePhase { from: 0; to: 6.2832; duration: 2400; loops: Animation.Infinite; easing.type: Easing.Linear; running: waveCanvas.visible && root.playing }
   onWavePhaseChanged: waveCanvas.requestPaint()
   property alias searchInput: searchField
@@ -2105,7 +2106,35 @@ Item {
                     onExited: if (root.hoveredTab === index) root.hoveredTab = -1
                     onClicked: root.setTab(index)
                   }
-                  InfoTip { watched: dockHover; tipText: modelData.tip }
+                  InfoTip { watched: dockHover; tipText: modelData.tip; delayMs: root.helpMode ? 3000 : 5000 }
+                }
+              }
+            }
+          }
+          // Help mode toggle: ASCII "?" via uiFont, beside settings gear.
+          Item {
+            id: helpBtn
+            width: Style.space(24)
+            height: Style.space(24)
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            Text {
+              anchors.centerIn: parent
+              text: "?"
+              color: root.helpMode ? root.accent : root.muted
+              font.family: root.uiFont
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.helpMode = !root.helpMode
+                if (root.helpMode) {
+                  root.notice = "Help on \u2014 hover any button 3s"
+                  noticeTimer.restart()
                 }
               }
             }
@@ -2271,7 +2300,7 @@ Item {
                   else root.saveCurrent()
                 }
               }
-              InfoTip { watched: npSaveHover; tipText: root.currentSaved ? "Remove from Favourite" : "Save to Favourite" }
+              InfoTip { watched: npSaveHover; tipText: root.currentSaved ? "Remove from Favourite" : "Save to Favourite"; delayMs: root.helpMode ? 3000 : 5000 }
             }
             // download
             Text {
@@ -2292,7 +2321,7 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.downloadCurrent()
               }
-              InfoTip { watched: npDlHover; tipText: "Download offline (opus)" }
+              InfoTip { watched: npDlHover; tipText: "Download offline (opus)"; delayMs: root.helpMode ? 3000 : 5000 }
             }
             // follow toggle
             Rectangle {
@@ -2342,7 +2371,7 @@ Item {
                   if (root.homeMode === "artist") root.reloadArtists()
                 }
               }
-              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist" }
+              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist"; delayMs: root.helpMode ? 3000 : 5000 }
             }
             }
           }
@@ -2665,7 +2694,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   Behavior on color { ColorAnimation { duration: 120 } }
                   MouseArea { id: volDown; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(-5) }
-                  InfoTip { watched: volDown; tipText: "Quieter" }
+                  InfoTip { watched: volDown; tipText: "Quieter"; delayMs: root.helpMode ? 3000 : 5000 }
                 }
                 Text {
                   width: Style.space(30)
@@ -2686,23 +2715,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   Behavior on color { ColorAnimation { duration: 120 } }
                   MouseArea { id: volUp; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(5) }
-                  InfoTip { watched: volUp; tipText: "Louder" }
-                }
-              }
-              Text {
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(2)
-                text: "󰀃"
-                visible: root.isVideoId(root.currentVideoId)
-                color: root.mixPrefetching ? root.accent : root.muted
-                font.family: root.iconFont
-                font.pixelSize: Math.round(Style.font.iconLarge * 1.5)
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.margins: -Style.space(8)
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.startMix(root.currentVideoId)
+                  InfoTip { watched: volUp; tipText: "Louder"; delayMs: root.helpMode ? 3000 : 5000 }
                 }
               }
             }
@@ -2803,7 +2816,7 @@ Item {
             opacity: visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: statusHover; anchors.fill: parent; hoverEnabled: true }
-            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: 400 }
+            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: root.helpMode ? 3000 : 400 }
           }
         }
 
@@ -4244,6 +4257,50 @@ Item {
                 }
               }
 
+              Item {
+                width: parent.width
+                height: Style.space(26)
+                clip: true
+                ListView {
+                  anchors.fill: parent
+                  orientation: ListView.Horizontal
+                  model: ["Noto Sans", "Noto Serif", "Liberation Sans", "Liberation Serif", "JetBrains Mono", "Omarchy system"]
+                  spacing: Style.space(5)
+                  clip: true
+                  delegate: Rectangle {
+                    height: Style.space(24)
+                    width: fontPresetLabel.width + Style.space(14)
+                    radius: height / 2
+                    color: (modelData === "Omarchy system" ? root.customFontName === "" : root.customFontName === modelData) ? root.accent : "transparent"
+                    border.width: 1
+                    border.color: (modelData === "Omarchy system" ? root.customFontName === "" : root.customFontName === modelData) ? root.accent : root.muted
+                    Text {
+                      id: fontPresetLabel
+                      anchors.centerIn: parent
+                      text: modelData
+                      color: (modelData === "Omarchy system" ? root.customFontName === "" : root.customFontName === modelData) ? root.onAccent : root.ink
+                      font.family: modelData === "Omarchy system" ? Style.font.menuFamily : modelData
+                      font.pixelSize: Style.font.caption
+                    }
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        if (modelData === "Omarchy system") {
+                          root.customFontName = ""
+                          root.runCmd(["font-reset"])
+                        } else {
+                          root.customFontName = modelData
+                          root.saveSetting("customFont", modelData)
+                          root.notice = "Font: " + modelData
+                          noticeTimer.restart()
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
               Text { text: "Sleep timer"; color: root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: true; topPadding: Style.space(8) }
 
               Item {
@@ -4736,7 +4793,7 @@ Item {
       cursorShape: Qt.PointingHandCursor
       onClicked: if (tbtn.tapped) tbtn.tapped()
     }
-    InfoTip { watched: btnHover; tipText: tbtn.tip }
+    InfoTip { watched: btnHover; tipText: tbtn.tip; delayMs: root.helpMode ? 3000 : 5000 }
   }
 
   component HomeRow: Rectangle {
@@ -4848,7 +4905,7 @@ Item {
             root.ytSearchAndPlay(r.artist + " " + r.title)
           }
         }
-        InfoTip { watched: ytHover; tipText: "Full version on YouTube" }
+        InfoTip { watched: ytHover; tipText: "Full version on YouTube"; delayMs: root.helpMode ? 3000 : 5000 }
       }
     }
 

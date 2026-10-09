@@ -1220,6 +1220,58 @@ case "${1:-}" in
     sset customFont "" >/dev/null
     printf 'system font\n'
     ;;
+  font-presets)
+    # Curated presets for the QML font picker. Candidates in order:
+    # Noto Sans, Noto Serif, Liberation Sans, Liberation Serif,
+    # JetBrains Mono -> JetBrainsMono Nerd Font. Each resolves its EXACT
+    # installed family via `fc-list : family` (whole-line case-insensitive
+    # match; family = canonical first hit); only hits emitted as
+    # [{label,family}] (label = pretty name, family = exact installed
+    # string for QML font.family verbatim use). Always appends the
+    # Omarchy system reset entry. Prints compact JSON array, exit 0.
+    if ! command -v fc-list >/dev/null 2>&1 || ! command -v fc-match >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+      printf '[{"label":"Omarchy system","family":""}]\n'
+      exit 0
+    fi
+    _fp_raw="$(fc-list : family 2>/dev/null || true)"
+    _fp_all=""
+    if [[ -n "${_fp_raw:-}" ]]; then
+      _fp_all="$(printf '%s\n' "$_fp_raw" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' 2>/dev/null || true)"
+    fi
+    _fp_json='[]'
+    _fp_resolve() {
+      local _cand="${1:-}" _hit=""
+      [[ -n "$_cand" ]] || return 1
+      if [[ "$_cand" =~ [[:cntrl:]] ]]; then return 1; fi
+      [[ -n "${_fp_all:-}" ]] || return 1
+      _hit="$(printf '%s\n' "$_fp_all" | grep -i -m1 -x -F -- "$_cand" 2>/dev/null || true)"
+      [[ -n "$_hit" ]] || return 1
+      if [[ "$_hit" =~ [[:cntrl:]] ]]; then return 1; fi
+      printf '%s' "$_hit"
+    }
+    _fp_try() {
+      local _label="${1:-}" _c _fam _fp_tmp
+      shift || true
+      [[ -n "$_label" ]] || return 0
+      if [[ "$_label" =~ [[:cntrl:]] ]]; then return 0; fi
+      for _c in "$@"; do
+        if _fam="$(_fp_resolve "$_c")"; then
+          [[ -n "$_fam" ]] || continue
+          _fp_tmp="$(jq -c --arg l "$_label" --arg f "$_fam" '. + [{label:$l,family:$f}]' <<<"$_fp_json" 2>/dev/null || true)"
+          if [[ -n "${_fp_tmp:-}" ]]; then _fp_json="$_fp_tmp"; fi
+          break
+        fi
+      done
+    }
+    _fp_try "Noto Sans" "Noto Sans"
+    _fp_try "Noto Serif" "Noto Serif"
+    _fp_try "Liberation Sans" "Liberation Sans"
+    _fp_try "Liberation Serif" "Liberation Serif"
+    _fp_try "JetBrains Mono" "JetBrains Mono" "JetBrainsMono Nerd Font"
+    _fp_sys_tmp="$(jq -c --arg l "Omarchy system" --arg f "" '. + [{label:$l,family:$f}]' <<<"$_fp_json" 2>/dev/null || true)"
+    if [[ -n "${_fp_sys_tmp:-}" ]]; then _fp_json="$_fp_sys_tmp"; else _fp_json='[{"label":"Omarchy system","family":""}]'; fi
+    printf '%s\n' "$_fp_json"
+    ;;
   settings)
     require jq
     cat "$SETTINGS_FILE"
@@ -2388,7 +2440,7 @@ case "${1:-}" in
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-find QUERY|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-presets|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-find QUERY|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
     exit 2
     ;;
 esac
