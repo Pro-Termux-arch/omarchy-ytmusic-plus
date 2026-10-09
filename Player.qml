@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.2.3 stable"
+  readonly property string appVersion: "v2.2.4 beta"
 
   property bool opened: false
   property bool searching: false
@@ -2364,50 +2364,79 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.showRemaining = !root.showRemaining }
               }
-              Rectangle {
-                id: seekBar
-                width: Math.max(Style.space(40), parent.width - Style.space(34) * 2 - timeRow.spacing * 2)
-                height: seekHover.containsMouse ? Style.space(5) : Style.space(3)
-                radius: height / 2
-                color: root.raised
-                anchors.verticalCenter: parent.verticalCenter
-                Behavior on height { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                 Rectangle {
-                  id: seekFill
-                  width: parent.width * Math.min(1, root.position / Math.max(1, root.playbackDuration))
-                  height: parent.height
-                  radius: height / 2
-                  color: root.accent
-                  Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                }
-                Rectangle {
-                  id: seekKnob
-                  width: Style.space(10)
-                  height: Style.space(10)
-                  radius: width / 2
-                  color: root.accent
-                  border.color: root.surface
-                  border.width: 1
+                  id: seekBar
+                  width: Math.max(Style.space(40), parent.width - Style.space(34) * 2 - timeRow.spacing * 2)
+                  height: 14
+                  color: "transparent"
                   anchors.verticalCenter: parent.verticalCenter
-                  x: Math.min(parent.width - width / 2, Math.max(-width / 2, seekFill.width - width / 2))
-                  visible: root.playbackDuration > 0
-                  opacity: seekHover.containsMouse || root.playing ? 1 : 0.85
-                  transformOrigin: Item.Center
-                  scale: (seekHover.containsMouse || seekHover.pressed) ? 1.25 : 1.0
-                  Behavior on opacity { NumberAnimation { duration: 120 } }
-                  Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                }
-                Glow {
-                  anchors.fill: seekKnob
-                  source: seekKnob
-                  color: root.accent
-                  radius: 6
-                  samples: 13
-                  spread: 0.4
-                  transparentBorder: true
-                  visible: seekKnob.visible
-                }
-                // Scrub like a video timeline: click or drag anywhere.
+                  Canvas {
+                    id: waveCanvas
+                    anchors.fill: parent
+                    onWidthChanged: requestPaint()
+                    Component.onCompleted: requestPaint()
+                    onPaint: {
+                      var ctx = getContext("2d")
+                      var w = width
+                      var h = height
+                      ctx.clearRect(0, 0, w, h)
+                      if (w <= 0 || h <= 0) return
+                      var midY = h / 2
+                      var amp = 4
+                      var waveLen = 16
+                      var phase = Date.now() / 900
+                      var css = function(c, a) { return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + a + ")" }
+                      var waveY = function(x) { return midY + amp * Math.sin((x / waveLen) * 2 * Math.PI + phase) }
+                      var strokeRange = function(x0, x1, style) {
+                        if (x1 <= x0) return
+                        ctx.strokeStyle = style
+                        ctx.lineWidth = 2
+                        ctx.lineCap = "round"
+                        ctx.lineJoin = "round"
+                        ctx.beginPath()
+                        var x = x0
+                        ctx.moveTo(x, waveY(x))
+                        x += 2
+                        while (x < x1) { ctx.lineTo(x, waveY(x)); x += 2 }
+                        ctx.lineTo(x1, waveY(x1))
+                        ctx.stroke()
+                      }
+                      var playedCss = css(root.accent, 1)
+                      var restCss = css(root.muted, 0.4)
+                      if (!(root.playbackDuration > 0)) {
+                        strokeRange(0, w, restCss)
+                        return
+                      }
+                      var ratio = Math.min(1, root.position / Math.max(1, root.playbackDuration))
+                      var splitX = Math.max(0, Math.min(w, ratio * w))
+                      strokeRange(0, splitX, playedCss)
+                      strokeRange(splitX, w, restCss)
+                      var dotR = (seekHover.containsMouse || seekHover.pressed) ? 5 : 4
+                      ctx.fillStyle = playedCss
+                      ctx.beginPath()
+                      ctx.arc(splitX, waveY(splitX), dotR, 0, 2 * Math.PI)
+                      ctx.fill()
+                    }
+                  }
+                  Timer {
+                    id: waveTimer
+                    interval: 200
+                    running: waveCanvas.visible && root.playing
+                    repeat: true
+                    onTriggered: waveCanvas.requestPaint()
+                  }
+                  Connections {
+                    target: root
+                    function onPositionChanged() { waveCanvas.requestPaint() }
+                    function onPlayingChanged() { waveCanvas.requestPaint() }
+                    function onPlaybackDurationChanged() { waveCanvas.requestPaint() }
+                  }
+                  Connections {
+                    target: seekHover
+                    function onContainsMouseChanged() { waveCanvas.requestPaint() }
+                    function onPressedChanged() { waveCanvas.requestPaint() }
+                  }
+                  // Scrub like a video timeline: click or drag anywhere.
                 MouseArea {
                   id: seekHover
                   anchors.fill: parent
