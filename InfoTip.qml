@@ -5,6 +5,16 @@ import qs.Commons
 // `watched` at its MouseArea. Shows what the button does without clicking.
 Rectangle {
   id: tip
+  property var theme: null
+  function tc(name, fallback) { return (theme && theme[name] !== undefined) ? theme[name] : fallback; }
+  function tc2(obj, key, fallback) { var o = tc(obj, null); return (o && o[key] !== undefined) ? o[key] : fallback; }
+  property color themeTooltipBackground: tc2("tooltip", "background", "#101315")
+  property color themeTooltipBorder: tc2("tooltip", "border", "#cacccc")
+  property color themeTooltipText: tc2("tooltip", "text", "#cacccc")
+  Component.onCompleted: {
+    try { theme = ShellColor; } catch (e1) { theme = null; }
+    if (!theme) { try { theme = Color; } catch (e2) { theme = null; } }
+  }
   property var watched
   property string tipText: ""
   property int delayMs: 5000
@@ -19,9 +29,9 @@ Rectangle {
   width: tipLabel.width + Style.space(14)
   height: Style.space(22)
   radius: Style.space(6)
-  color: Color.tooltip.background
+  color: tip.themeTooltipBackground
   border.width: 1
-  border.color: Color.tooltip.border
+  border.color: tip.themeTooltipBorder
   visible: tip.tipText !== "" && tip.hovered && tip.dwellOk
   z: 100
 
@@ -37,7 +47,7 @@ Rectangle {
     maximumLineCount: 1
     elide: Text.ElideRight
     width: Math.min(implicitWidth, Style.space(220))
-    color: Color.tooltip.text
+    color: tip.themeTooltipText
     font.family: Style.font.menuFamily
     font.pixelSize: Style.font.caption
   }

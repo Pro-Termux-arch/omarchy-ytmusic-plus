@@ -10,6 +10,17 @@ import qs.Ui
 BarWidget {
   id: root
   moduleName: "local.ytmusic-plus"
+  property var theme: null
+  function tc(name, fallback) { return (theme && theme[name] !== undefined) ? theme[name] : fallback; }
+  function tc2(obj, key, fallback) { var o = tc(obj, null); return (o && o[key] !== undefined) ? o[key] : fallback; }
+  property color themeForeground: tc("foreground", "#cacccc")
+  property color themeAccent: tc("accent", "#cacccc")
+  property color themeBarBackground: tc2("bar", "background", "#101315")
+  property color themePopupsBorder: tc2("popups", "border", "#cacccc")
+  Component.onCompleted: {
+    try { theme = ShellColor; } catch (e1) { theme = null; }
+    if (!theme) { try { theme = Color; } catch (e2) { theme = null; } }
+  }
 
   property string title: ""
   property string artist: ""
@@ -21,7 +32,7 @@ BarWidget {
   property bool downloaded: false
   property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
   readonly property bool hasTrack: title !== ""
-  readonly property color foreground: root.bar ? root.bar.barForeground : Color.foreground
+  readonly property color foreground: root.bar ? root.bar.barForeground : root.themeForeground
   readonly property bool opened: popupOpen
   property var vizLevels: []
   property string vizPath: Qt.resolvedUrl("bin/ytviz").toString().replace("file://", "")
@@ -114,9 +125,9 @@ BarWidget {
     width: parent.width
     height: Math.max(Style.space(24), parent.height - Style.space(8))
     radius: Style.space(6)
-    color: root.hasTrack ? Color.bar.background : "transparent"
+    color: root.hasTrack ? root.themeBarBackground : "transparent"
     border.width: root.hasTrack ? 1 : 0
-    border.color: pillHover.containsMouse ? Color.accent : Color.popups.border
+    border.color: pillHover.containsMouse ? root.themeAccent : root.themePopupsBorder
     scale: bodyMouse.pressed ? 0.97 : 1.0
     transformOrigin: Item.Center
     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
@@ -127,7 +138,7 @@ BarWidget {
     Rectangle {
       anchors.fill: parent
       radius: parent.radius
-      color: Color.accent
+      color: root.themeAccent
       opacity: (pillHover.containsMouse && root.hasTrack) ? 0.10 : 0
       Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
@@ -178,7 +189,7 @@ BarWidget {
         width: parent.height
         height: parent.height
         radius: Style.space(4)
-        color: Color.bar.background
+        color: root.themeBarBackground
         clip: true
         Image { anchors.fill: parent; source: root.thumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true }
         MouseArea {
@@ -207,7 +218,7 @@ BarWidget {
         width: Style.space(52)
         anchors.verticalCenter: parent.verticalCenter
         levels: root.vizLevels
-        barColor: Color.accent
+        barColor: root.themeAccent
       }
 
       Item {
@@ -221,7 +232,7 @@ BarWidget {
           width: Style.space(20)
           height: width
           radius: width / 2
-          color: Color.accent
+          color: root.themeAccent
           opacity: prevMouse.containsMouse ? 0.18 : 0
           Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
         }
@@ -241,12 +252,12 @@ BarWidget {
         Rectangle {
           anchors.fill: parent
           radius: width / 2
-          color: Color.accent
+          color: root.themeAccent
           opacity: playMouse.containsMouse ? 0.22 : 0
           Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         }
-        Text { anchors.centerIn: parent; text: "󰏤"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
-        Text { anchors.centerIn: parent; text: "󰐊"; color: Color.accent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
+        Text { anchors.centerIn: parent; text: "󰏤"; color: root.themeAccent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 1 : 0; scale: root.playing ? 1 : 0.6; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
+        Text { anchors.centerIn: parent; text: "󰐊"; color: root.themeAccent; font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily; font.pixelSize: Style.font.bodySmall; opacity: root.playing ? 0 : 1; scale: root.playing ? 0.6 : 1; Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } } }
         MouseArea {
           id: playMouse
           anchors.fill: parent
@@ -270,7 +281,7 @@ BarWidget {
           width: Style.space(20)
           height: width
           radius: width / 2
-          color: Color.accent
+          color: root.themeAccent
           opacity: nextMouse.containsMouse ? 0.18 : 0
           Behavior on opacity { NumberAnimation { duration: 190; easing.type: Easing.OutCubic } }
         }

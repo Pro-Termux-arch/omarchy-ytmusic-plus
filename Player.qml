@@ -16,15 +16,26 @@ Item {
 
   // Theme-derived roles. surfaces follow the active Omarchy theme; the accent
   // (and its readable on-accent) repaint automatically on theme switches.
-  readonly property color ink: Color.popups.text
-  readonly property color surface: Color.popups.background
-  readonly property color border: Color.popups.border
-  readonly property color muted: Color.muted
-  readonly property color accent: Color.accent
+  // Theme bridge: ShellColor on newer shells, Color on this machine, literals
+  // when neither singleton exists. tc/tc2 re-evaluate on theme assignment
+  // (null->object at completion) and on live theme switches via notify.
+  property var theme: null
+  function tc(name, fallback) { return (theme && theme[name] !== undefined) ? theme[name] : fallback; }
+  function tc2(obj, key, fallback) { var o = tc(obj, null); return (o && o[key] !== undefined) ? o[key] : fallback; }
+  readonly property color ink: tc2("popups", "text", "#cacccc")
+  readonly property color surface: tc2("popups", "background", "#101315")
+  readonly property color border: tc2("popups", "border", "#cacccc")
+  readonly property color muted: tc("muted", "#707880")
+  readonly property color accent: tc("accent", "#cacccc")
+  readonly property color barBackground: tc2("bar", "background", "#101315")
   readonly property color raised: Style.normalFill
+  Component.onCompleted: {
+    try { theme = ShellColor; } catch (e1) { theme = null; }
+    if (!theme) { try { theme = Color; } catch (e2) { theme = null; } }
+  }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v1.8 beta"
+  readonly property string appVersion: "v1.9 beta"
 
   property bool opened: false
   property bool searching: false
@@ -66,6 +77,8 @@ Item {
   property string updateLocalSha: ""
   property string updateRemoteSha: ""
   property string updateLocalVersion: ""
+  property string updateChannel: "beta"
+  property string updateTarget: "-"
   property bool updateAuto: true
   property int updateLastCheck: 0
   property bool updateChecking: false
@@ -803,6 +816,8 @@ Item {
       setDlQuality = s.dlQuality === "compact" ? "compact" : "best"
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
+      var uch = String(s.update_channel || "beta")
+      updateChannel = (uch === "stable") ? "stable" : "beta"
       var ulc = s.update_last_check
       if (typeof ulc === "string" && ulc === "off") { updateAuto = false }
       else { updateAuto = true; var ulcNum = Math.floor(Number(ulc) || 0); updateLastCheck = ulcNum > 0 ? ulcNum : 0 }
@@ -867,17 +882,17 @@ Item {
   }
 
   // ---- self-update: SHA-compared, no version-string guessing ------------------
-  // update-check prints one UPDATE_CHECK line (short SHAs + manifest version);
-  // update-apply runs the plugin manager then rescans so the new QML loads.
+  // update-check [stable|beta] prints one UPDATE_CHECK line (short SHAs +
+  // manifest version + channel/target); update-apply [stable|beta] same.
   // Dedicated processes only (never actionProc: an apply can take minutes and
   // must never block playback/queue commands).
   function checkUpdates(manual) {
     if (updateCheckProc.running || updateApplyProc.running) return
     updateChecking = true
-    if (manual) updateStatusText = "Checking for updates..."
+    if (manual) updateStatusText = "Checking..."
     updateCheckProc.collected = ""
     updateCheckProc.manual = !!manual
-    updateCheckProc.command = ["bash", scriptPath, "update-check"]
+    updateCheckProc.command = ["bash", scriptPath, "update-check", updateChannel]
     updateCheckProc.running = true
   }
 
@@ -890,10 +905,16 @@ Item {
     return ""
   }
 
+  function shortUpdateSha(s) {
+    var v = String(s || "")
+    if (v === "" || v === "unknown") return v === "" ? "unknown" : v
+    return v.slice(0, 7)
+  }
+
   function recordUpdateCheck() {
-    if (!updateAuto) return
     var now = Math.floor(Date.now() / 1000)
     updateLastCheck = now
+    if (!updateAuto) return
     saveSetting("update_last_check", String(now))
   }
 
@@ -908,14 +929,31 @@ Item {
     }
   }
 
+  function setUpdateChannel(c) {
+    var v = (c === "stable") ? "stable" : "beta"
+    if (updateChannel === v) return
+    updateChannel = v
+    saveSetting("update_channel", v)
+  }
+
   // Piggybacks the settings load (no new Timer): one background check per
-  // popup open when the last check is older than 24h. Waits for settings so a
+  // popup open when the last check is older than 30min. Waits for settings so a
   // stored opt-out is honored before any auto-apply can fire.
   function maybeAutoUpdateCheck() {
     if (!opened || updateAutoChecked) return
     updateAutoChecked = true
     var now = Math.floor(Date.now() / 1000)
-    if ((now - (updateLastCheck || 0)) > 86400) checkUpdates(false)
+    if ((now - (updateLastCheck || 0)) > 1800) checkUpdates(false)
+  }
+
+  // Periodic piggyback for long-open popups (called from the status-refresh
+  // path): at most one background check per 30min of open time. Requires
+  // updateAutoChecked so the initial settings load (and opt-out) wins first.
+  function maybePeriodicUpdateCheck() {
+    if (!opened || !updateAutoChecked) return
+    if (updateCheckProc.running || updateApplyProc.running) return
+    var now = Math.floor(Date.now() / 1000)
+    if ((now - (updateLastCheck || 0)) > 1800) checkUpdates(false)
   }
 
   function parseUpdateCheck(raw, code, errText) {
@@ -932,26 +970,38 @@ Item {
     if (found === "") {
       updateAvailable = false
       if (noGit) updateStatusText = "Not a git checkout - update via omarchy plugin update"
-      else updateStatusText = "Check failed: " + (errReason || ("exit " + code))
+      else updateStatusText = "Check failed"
       return
     }
     var avail = updateField(found, "available")
-    updateLocalVersion = updateField(found, "local_version")
-    updateLocalSha = updateField(found, "local_sha")
-    updateRemoteSha = updateField(found, "remote_sha")
+    var lv = updateField(found, "local_version")
+    var ls = shortUpdateSha(updateField(found, "local_sha"))
+    var rs = shortUpdateSha(updateField(found, "remote_sha"))
+    var ch = updateField(found, "channel")
+    var tg = updateField(found, "target")
+    if (ch === "stable" || ch === "beta") updateChannel = ch
+    updateTarget = (tg !== "") ? tg : "-"
+    updateLocalVersion = lv
+    updateLocalSha = ls
+    updateRemoteSha = rs
     if (avail !== "yes" && avail !== "no" && avail !== "unknown") {
       updateAvailable = false
-      updateStatusText = "Check failed: bad response"
+      updateStatusText = "Check failed"
+      return
+    }
+    if ((avail === "yes" || avail === "no") && (ls === "" || ls === "unknown" || rs === "" || rs === "unknown" || lv === "")) {
+      updateAvailable = false
+      updateStatusText = "Check failed"
       return
     }
     if (avail === "yes") {
       updateAvailable = true
-      updateStatusText = "Update available (" + updateLocalSha + " -> " + updateRemoteSha + ")"
+      updateStatusText = "Update available (" + ls + " -> " + rs + ")"
       recordUpdateCheck()
       if (!updateCheckProc.manual && updateAuto) applyUpdate()
     } else if (avail === "no") {
       updateAvailable = false
-      updateStatusText = "Up to date (v" + updateLocalVersion + " - " + updateLocalSha + ")"
+      updateStatusText = "Up to date (v" + lv + " - " + ls + ")"
       recordUpdateCheck()
     } else {
       updateAvailable = false
@@ -959,10 +1009,22 @@ Item {
     }
   }
 
+  function footerUpdateStatus() {
+    if (updateChecking) return "Checking..."
+    if (updateAvailable) return "Update available ->"
+    var s = String(updateStatusText || "")
+    if (s.indexOf("Up to date") === 0) return "Updated"
+    if (s.indexOf("Check failed") === 0) return "Failed"
+    if (s.indexOf("Not a git") === 0) return "No git"
+    if (s.indexOf("Never checked") === 0) return "Check?"
+    if (s === "Checking...") return "Checking..."
+    return s.slice(0, 20)
+  }
+
   function applyUpdate() {
     if (updateApplyProc.running) return
     updateApplyProc.collected = ""
-    updateApplyProc.command = ["bash", scriptPath, "update-apply"]
+    updateApplyProc.command = ["bash", scriptPath, "update-apply", updateChannel]
     updateApplyProc.running = true
     notice = "Updating..."
     noticeTimer.restart()
@@ -1105,6 +1167,7 @@ Item {
     } catch (error) {
       console.warn("YTMusic Plus: invalid player status", error)
     }
+    maybePeriodicUpdateCheck()
   }
 
   ListModel { id: tracks }
@@ -1544,16 +1607,17 @@ Item {
             Rectangle {
               anchors.fill: parent
               radius: height / 2
-              color: Color.bar.background
+              color: root.barBackground
               border.width: 1
               border.color: root.border
             }
 
             Rectangle {
               id: dockHighlight
-              x: Style.space(5) + (dockCellsRepeater.itemAt(dockRow.litTab) ? dockCellsRepeater.itemAt(dockRow.litTab).x : 0)
+              visible: true
+              x: Style.space(5) + ((dockCellsRepeater.count > dockRow.litTab && dockCellsRepeater.itemAt(dockRow.litTab)) ? dockCellsRepeater.itemAt(dockRow.litTab).x : 0)
               y: Style.space(4)
-              width: dockCellsRepeater.itemAt(dockRow.litTab) ? dockCellsRepeater.itemAt(dockRow.litTab).width : 0
+              width: (dockCellsRepeater.count > dockRow.litTab && dockCellsRepeater.itemAt(dockRow.litTab)) ? dockCellsRepeater.itemAt(dockRow.litTab).width : Style.space(44)
               height: parent.height - Style.space(8)
               radius: height / 2
               color: root.accent
@@ -2801,7 +2865,7 @@ Item {
 
               Text {
                 width: parent.width
-                text: root.updateChecking ? "Checking for updates..." : root.updateStatusText
+                text: root.updateChecking ? "Checking..." : root.updateStatusText
                 textFormat: Text.PlainText
                 color: root.muted
                 font.family: root.uiFont
@@ -2810,21 +2874,13 @@ Item {
               }
 
               SettingRow {
-                title: "Check for updates"
-                desc: "Compare local and upstream git SHAs"
-                control: SettingBtn {
-                  label: "Check"
-                  tapped: function() { root.checkUpdates(true) }
-                }
-              }
-
-              SettingRow {
-                visible: root.updateAvailable
-                title: "Update available"
-                desc: root.updateLocalSha + " -> " + root.updateRemoteSha
-                control: SettingBtn {
-                  label: "Update now"
-                  tapped: function() { root.applyUpdate() }
+                title: "Update channel"
+                desc: "Stable tags or beta branch"
+                control: SettingCycle {
+                  options: ["stable", "beta"]
+                  labels: ["Stable", "Beta"]
+                  current: root.updateChannel
+                  picked: function(v) { root.setUpdateChannel(v) }
                 }
               }
 
@@ -2874,17 +2930,50 @@ Item {
 
         // Bottom bar: version bottom-left, credit bottom-center (kept short so
         // the two can never overlap — the v1.2 footer-collision report).
+        // Update cluster lives here (compact): version + check icon + short
+        // status; Update replaces status when available so the left cluster
+        // never reaches the centered credit. Height stays 18.
         Item {
           width: parent.width
           height: Style.space(18)
-          Text {
+          Row {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: root.appVersion
-            color: root.muted
-            opacity: 0.7
-            font.family: root.uiFont
-            font.pixelSize: Style.font.caption
+            spacing: Style.space(4)
+            clip: true
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.appVersion
+              color: root.muted
+              opacity: 0.7
+              font.family: root.uiFont
+              font.pixelSize: Style.font.caption
+            }
+            TransportBtn {
+              glyph: "\u21bb"
+              btnSize: Style.space(18)
+              tip: "Check for updates"
+              visible: !root.updateChecking
+              tapped: function() { root.checkUpdates(true) }
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.footerUpdateStatus()
+              visible: !root.updateAvailable
+              textFormat: Text.PlainText
+              color: root.muted
+              opacity: 0.7
+              font.family: root.uiFont
+              font.pixelSize: Style.font.caption
+              width: Math.min(implicitWidth, Style.space(72))
+              elide: Text.ElideRight
+            }
+            SettingBtn {
+              label: "Update"
+              visible: root.updateAvailable && !root.updateChecking
+              height: Style.space(18)
+              tapped: function() { root.applyUpdate() }
+            }
           }
           Text {
             anchors.centerIn: parent

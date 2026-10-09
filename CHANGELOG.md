@@ -1,11 +1,17 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **7** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta)
+Updates so far: **8** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 
-## v1.8 beta (current)
+## v1.9 beta (current)
+
+- Cold-start off-by-one fixed: tapping the Nth song no longer plays N+1
+- Updater moves to the footer: version + check button + status right there;
+  auto-check every 30 min; stable/beta channels in Settings
+
+## v1.8 beta
 
 - Idle auto-collapse: the bar pill collapses to its icon 60s after playback
   stops (display-only — resume re-expands instantly, no new timers)

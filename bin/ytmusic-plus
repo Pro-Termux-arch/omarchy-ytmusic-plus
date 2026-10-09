@@ -69,7 +69,7 @@ commit() {
 # (including 450ms status polls), so it must NEVER rewrite the file when all
 # keys are present — an unconditional rewrite raced with `set` and silently
 # reverted the user's change within a second (the "settings don't stick" bug).
-SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0}'
+SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta"}'
 if [[ -e "$SETTINGS_FILE" ]]; then
   if ! jq -e --argjson d "$SETTINGS_DEFAULTS" '($d | keys_unsorted) - (keys_unsorted) | length == 0' "$SETTINGS_FILE" >/dev/null 2>&1; then
     tmp_s="$RUNTIME_DIR/settings.merge.tmp"
@@ -195,8 +195,18 @@ kill_old_mpv() {
 #   2. fresh stream-URL cache (< 3h)
 #   3. yt-dlp -g with player_client=android, then web
 # Caches layer-3 results for layer-2.
+# Delete a video's stream-URL cache so the next resolve re-fetches fresh.
+# Used when a cached URL proves dead on arrival (quick-death retry) or carries
+# a past `expire=` timestamp (YouTube URLs rot even within the 3h TTL).
+bust_stream_cache() {
+  local vid="$1" cache
+  valid_id "$vid" || return 2
+  cache="$CACHE_DIR/stream-$(sha1 "$vid")"
+  rm -f -- "$cache" "$cache.tmp" 2>/dev/null || true
+}
+
 resolve_playable() {
-  local vid="$1" cache age now url
+  local vid="$1" cache age now url exp
   valid_id "$vid" || return 2
   if is_downloaded "$vid"; then
     dl_path_for "$vid"
@@ -210,7 +220,24 @@ resolve_playable() {
       # Size-guard before slurp: a hand-planted huge cache file must not OOM us.
       if [[ "$(stat -c%s -- "$cache" 2>/dev/null || printf 0)" -le 8192 ]]; then
         url="$(tr -d '\n' <"$cache" 2>/dev/null || true)"
-        [[ "$url" == https://* ]] && { printf '%s\n' "$url"; return 0; }
+        if [[ "$url" == https://* ]]; then
+          # YouTube URLs carry `expire=` (epoch secs). A past expire means the
+          # URL is dead even though the file is fresh (clock jump, IP rotate,
+          # early invalidation) — bust and re-resolve instead of playing dead
+          # (which would quick-die in mpv and skip N→N+1 via watch_track).
+          if [[ "$url" =~ [\?\&]expire=([0-9]+) ]]; then
+            exp="${BASH_REMATCH[1]}"
+            if [[ "$exp" =~ ^[0-9]+$ ]] && (( now > exp )); then
+              rm -f -- "$cache" 2>/dev/null || true
+            else
+              printf '%s\n' "$url"
+              return 0
+            fi
+          else
+            printf '%s\n' "$url"
+            return 0
+          fi
+        fi
       fi
     fi
   fi
@@ -309,7 +336,8 @@ watch_track() {
   local mpv_pid="$1"
   (
     exec 9>&-
-    local started played current count index streak streak_raw
+    local started played current count index streak streak_raw track_qd url_qd vid_qd dur_qd dur_secs
+    streak=0
     started="$(date +%s)"
     while is_our_mpv "$mpv_pid"; do sleep 1; done
     played=$(( $(date +%s) - started ))
@@ -346,6 +374,47 @@ watch_track() {
     # file internally); otherwise the queue stops at its last item while the
     # manual `next` button still wraps.
     if (( count > 0 )) && (( index >= 0 )); then
+      # Distrust stale state index on cold start: a previous longer queue can
+      # leave index beyond the current array (e.g. 5 with count 2).
+      # Modulo-wrapping such stale indices plays a surprising track (N→N+1
+      # style). Treat as end-of-queue: stop, or wrap only when loop==all.
+      if (( index >= count )); then
+        if [[ "$(sget loop)" == all ]]; then
+          start_index 0
+        fi
+        exit 0
+      fi
+      # Recover in place on the FIRST quick death for YouTube tracks: a
+      # fresh-but-dead cached stream URL (poisoned cache, IP rotate, early
+      # invalidation) launches dead, dies in <10s, and would otherwise skip
+      # N→N+1 even though N is resolvable. Bust the cache and retry the SAME
+      # index once; start_index falls through to N+1 automatically when truly
+      # unplayable (re-resolve still fails). Direct-stream rows (radio /
+      # previews, .url set) have no YouTube fallback — skip immediately when
+      # dead. Natural ends (played>=10) always advance. Naturally short tracks
+      # (duration <=10s) that end quickly are finished songs, not failures —
+      # advance without retry.
+      if (( played < 10 )) && (( streak == 1 )); then
+        track_qd="$(jq -c ".[$index]" "$QUEUE_FILE" 2>/dev/null || printf '')"
+        url_qd="$(jq -r '.url // ""' <<<"$track_qd" 2>/dev/null || printf '')"
+        vid_qd="$(jq -r '.videoId // ""' <<<"$track_qd" 2>/dev/null || printf '')"
+        dur_qd="$(jq -r '.duration // ""' <<<"$track_qd" 2>/dev/null || printf '')"
+        dur_secs=""
+        if dur_secs="$(dur_to_sec "$dur_qd" 2>/dev/null)"; then
+          [[ "$dur_secs" =~ ^[0-9]+$ ]] || dur_secs=""
+        else
+          dur_secs=""
+        fi
+        # Empty dur_secs = live/unknown/long: treat as failure (retry). Short
+        # (<=10s) = natural short end (advance).
+        if [[ -z "$dur_secs" || "$dur_secs" -gt 10 ]]; then
+          if [[ "$url_qd" != http://* && "$url_qd" != https://* ]] && valid_id "$vid_qd"; then
+            bust_stream_cache "$vid_qd" 2>/dev/null || true
+            start_index "$index"
+            exit 0
+          fi
+        fi
+      fi
       if (( index + 1 < count )); then
         start_index "$((index + 1))"
       elif [[ "$(sget loop)" == all ]]; then
@@ -376,7 +445,7 @@ start_index() {
   # _tries bounds the unplayable-track skip chain: without it, a fully
   # unresolvable queue (offline/throttled) recursed forever, wrapping the
   # queue indefinitely and spawning unbounded yt-dlp runs.
-  local index="$1" count track vid url state_tmp target _tries="${2:-0}"
+  local index="$1" count track vid url state_tmp target _tries="${2:-0}" exp_u now_u
   count="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
   [[ "$count" =~ ^[0-9]+$ ]] || count=0
   # Empty queue: stop stale playback instead of going silent on a dead index.
@@ -394,12 +463,28 @@ start_index() {
   # without any YouTube resolving.
   url="$(jq -r '.url // ""' <<<"$track" 2>/dev/null || printf '')"
   if [[ "$url" == http://* || "$url" == https://* ]]; then
-    state_tmp="$RUNTIME_DIR/state.json.tmp"
-    jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp" 2>/dev/null || return 1
-    [[ -s "$state_tmp" ]] || return 1
-    mv -- "$state_tmp" "$STATE_FILE"
-    launch_stream "$url"
-    return $?
+    # Stale direct URLs rot (previews expire, stations move). A past `expire=`
+    # means the stored URL is dead: fall back to the YouTube id for the SAME
+    # index when resolvable (recover in place) instead of playing dead and
+    # skipping N→N+1 via watch_track. Fake stream ids (RDO/PVW) fail the
+    # resolve below and fall through to the normal unplayable-track skip.
+    if [[ "$url" =~ [\?\&]expire=([0-9]+) ]]; then
+      exp_u="${BASH_REMATCH[1]}"
+      now_u="$(date +%s)"
+      if [[ "$exp_u" =~ ^[0-9]+$ ]] && (( now_u > exp_u )) && valid_id "$vid"; then
+        url=""
+      fi
+    fi
+    if [[ "$url" == http://* || "$url" == https://* ]]; then
+      state_tmp="$RUNTIME_DIR/state.json.tmp"
+      jq -c --argjson index "$index" '. + {index: $index}' <<<"$track" >"$state_tmp" 2>/dev/null || return 1
+      [[ -s "$state_tmp" ]] || return 1
+      mv -- "$state_tmp" "$STATE_FILE"
+      launch_stream "$url"
+      return $?
+    fi
+    # Expired url cleared above: fall through to the YouTube pre-resolve for
+    # the SAME index.
   fi
   # Pre-resolve BEFORE publishing state: if every source is down (offline,
   # throttled) we try the next track instead of going silent on a dead one.
@@ -611,6 +696,12 @@ update_manifest_version() {
   printf '%s\n' "$v"
 }
 
+# Highest stable tag from newline-separated names on stdin (vX.Y.Z-stable).
+# Uses sort -V for semver order; prints nothing when none match (never fails).
+update_pick_highest_stable() {
+  grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-stable$' 2>/dev/null | sort -V | tail -n 1 || true
+}
+
 # Serialize playback mutations under one exclusive lock; status takes shared.
 case "${1:-}" in
   queue|queue-clear|requeue|play|next|previous|stop|lib-save|lib-unsave|pl-create|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-remove|set|loop|shuffle|sleep|offset-nudge|offset-reset|font-install|font-reset)
@@ -693,6 +784,12 @@ case "${1:-}" in
     jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp" 2>/dev/null || { rm -f -- "$queue_tmp"; exit 1; }
     [[ -s "$queue_tmp" ]] || { rm -f -- "$queue_tmp"; exit 1; }
     mv -- "$queue_tmp" "$QUEUE_FILE"
+    # Validate/clamp the incoming display index against the actual array: the UI
+    # builds JSON from the displayed list, but a stale/desynced index must never
+    # modulo-wrap to a surprising track (N→N+1 style). Clamp to last valid.
+    qlen="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+    [[ "$qlen" =~ ^[0-9]+$ ]] || qlen=0
+    if (( qlen > 0 )) && (( index >= qlen )); then index=$((qlen - 1)); fi
     start_index "$index"
     ;;
   requeue)
@@ -709,6 +806,10 @@ case "${1:-}" in
     jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp" 2>/dev/null || { rm -f -- "$queue_tmp"; exit 1; }
     [[ -s "$queue_tmp" ]] || { rm -f -- "$queue_tmp"; exit 1; }
     mv -- "$queue_tmp" "$QUEUE_FILE"
+    # Clamp mix seed index to the actual array (same stale-index guard as queue).
+    qlen_rq="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+    [[ "$qlen_rq" =~ ^[0-9]+$ ]] || qlen_rq=0
+    if (( qlen_rq > 0 )) && (( index >= qlen_rq )); then index=$((qlen_rq - 1)); fi
     if [[ -s "$STATE_FILE" ]]; then
       state_tmp="$RUNTIME_DIR/state.json.tmp"
       jq -c --argjson index "$index" '. + {index: $index}' "$STATE_FILE" >"$state_tmp" 2>/dev/null || { rm -f -- "$state_tmp"; exit 1; }
@@ -740,15 +841,25 @@ case "${1:-}" in
   next)
     require jq
     [[ -s "$QUEUE_FILE" ]] || exit 0
+    qlen_n="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+    [[ "$qlen_n" =~ ^[0-9]+$ ]] || qlen_n=0
     current="$(jq -r '.index // -1' "$STATE_FILE" 2>/dev/null || printf '%s' -1)"
     [[ "$current" =~ ^-?[0-9]+$ ]] || current=-1
+    # Distrust stale state index on cold start: a previous longer queue can
+    # leave current beyond the array (e.g. 5 with len 2). Reset to start so
+    # next begins at 0 instead of modulo-wrapping stale to a surprise track.
+    if (( qlen_n > 0 )) && (( current < -1 || current >= qlen_n )); then current=-1; fi
     start_index "$((current + 1))"
     ;;
   previous)
     require jq
     [[ -s "$QUEUE_FILE" ]] || exit 0
+    qlen_p="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
+    [[ "$qlen_p" =~ ^[0-9]+$ ]] || qlen_p=0
     current="$(jq -r '.index // 0' "$STATE_FILE" 2>/dev/null || printf '%s' 0)"
     [[ "$current" =~ ^-?[0-9]+$ ]] || current=0
+    # Same stale-index guard as next: reset to 0 so previous wraps to last.
+    if (( qlen_p > 0 )) && (( current < 0 || current >= qlen_p )); then current=0; fi
     start_index "$((current - 1))"
     ;;
   toggle)
@@ -1101,6 +1212,8 @@ case "${1:-}" in
         # seconds of the last update check, or "off" when the user disables
         # auto-apply. Dual-purpose by design so the whitelist grows by one.
         [[ "$val" == off || "$val" =~ ^[0-9]+$ ]] || { printf 'update_last_check must be off|epoch-seconds\n' >&2; exit 2; } ;;
+      update_channel)
+        [[ "$val" == stable || "$val" == beta ]] || { printf 'update_channel must be stable|beta\n' >&2; exit 2; } ;;
       eqPreset)
         eq_preset_gains "$val" >/dev/null || { printf 'unknown eq preset\n' >&2; exit 2; } ;;
       eqGains)
@@ -1425,8 +1538,19 @@ case "${1:-}" in
     if [[ "$rc" -eq 0 || "$rc" -eq 124 || "$rc" -eq 143 ]]; then exit 1; else exit "$rc"; fi
     ;;
   update-check)
-    # Read-only SHA compare. Never writes state/queue/settings, never fails
-    # the UI: transport or git problems report available=unknown, exit 0.
+    # update-check [stable|beta] (default beta). Read-only SHA compare. Never
+    # writes state/queue/settings, never fails the UI: transport or git
+    # problems report available=unknown, exit 0.
+    # Output: UPDATE_CHECK local_version=.. local_sha=.. remote_sha=..
+    #   available=yes/no/unknown channel=<stable|beta> target=<label>
+    # remote_sha is the TARGET commit SHA (origin HEAD for beta, tag commit
+    # for stable; short 7-char or "unknown"); target is the stable tag name
+    # (e.g. v1.7.0-stable) or "-" for beta / when none.
+    upd_channel="${2:-beta}"
+    if [[ "$upd_channel" != stable && "$upd_channel" != beta ]]; then
+      printf 'update-check must be stable|beta\n' >&2
+      exit 2
+    fi
     plugindir="$(update_plugin_dir)"
     if [[ ! -d "$plugindir/.git" ]]; then
       printf 'git_checkout:false\n'
@@ -1439,43 +1563,132 @@ case "${1:-}" in
       printf 'refusing update-check: origin is not %s (anti-hijack)\n' "$UPDATE_UPSTREAM" >&2
       exit 2
     elif (( origin_rc != 0 )); then
-      printf 'UPDATE_CHECK local_version=%s local_sha=unknown remote_sha=unknown available=unknown\n' \
-        "$(update_manifest_version "$plugindir")"
+      printf 'UPDATE_CHECK local_version=%s local_sha=unknown remote_sha=unknown available=unknown channel=%s target=-\n' \
+        "$(update_manifest_version "$plugindir")" "$upd_channel"
       printf 'update-check: cannot verify origin (no git or no origin remote)\n' >&2
       exit 0
     fi
-    local_full=""; remote_line=""; remote_full=""
+    manifest_v="$(update_manifest_version "$plugindir")"
+    local_full=""
     if command -v timeout >/dev/null 2>&1; then
       local_full="$(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
     else
       local_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
     fi
     [[ "$local_full" =~ ^[0-9a-f]{40}$ ]] || local_full=""
-    if command -v timeout >/dev/null 2>&1; then
-      upd_ls=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" ls-remote origin HEAD)
-    else
-      upd_ls=(git -C "$plugindir" ls-remote origin HEAD)
-    fi
-    remote_line="$("${upd_ls[@]}" 2>/dev/null | head -n 1 || true)"
-    remote_full="${remote_line%%[[:space:]]*}"
-    [[ "$remote_full" =~ ^[0-9a-f]{40}$ ]] || remote_full=""
-    manifest_v="$(update_manifest_version "$plugindir")"
-    if [[ -z "$local_full" || -z "$remote_full" ]]; then
-      [[ -n "$local_full" ]] && local_short="${local_full:0:7}" || local_short="unknown"
-      [[ -n "$remote_full" ]] && remote_short="${remote_full:0:7}" || remote_short="unknown"
-      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=unknown\n' \
-        "$manifest_v" "$local_short" "$remote_short"
-      [[ -z "$local_full" ]] && printf 'update-check: cannot read local HEAD\n' >&2
-      [[ -z "$remote_full" ]] && printf 'update-check: cannot reach origin (offline?)\n' >&2
+    [[ -n "$local_full" ]] && local_short="${local_full:0:7}" || local_short="unknown"
+    if [[ "$upd_channel" == beta ]]; then
+      # Beta channel: origin HEAD (identical to historic behavior).
+      remote_line=""
+      if command -v timeout >/dev/null 2>&1; then
+        upd_ls=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" ls-remote origin HEAD)
+      else
+        upd_ls=(git -C "$plugindir" ls-remote origin HEAD)
+      fi
+      remote_line="$("${upd_ls[@]}" 2>/dev/null | head -n 1 || true)"
+      remote_full="${remote_line%%[[:space:]]*}"
+      [[ "$remote_full" =~ ^[0-9a-f]{40}$ ]] || remote_full=""
+      if [[ -z "$local_full" || -z "$remote_full" ]]; then
+        [[ -n "$remote_full" ]] && remote_short="${remote_full:0:7}" || remote_short="unknown"
+        printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=unknown channel=beta target=-\n' \
+          "$manifest_v" "$local_short" "$remote_short"
+        [[ -z "$local_full" ]] && printf 'update-check: cannot read local HEAD\n' >&2
+        [[ -z "$remote_full" ]] && printf 'update-check: cannot reach origin (offline?)\n' >&2
+        exit 0
+      fi
+      if [[ "$local_full" == "$remote_full" ]]; then avail=no; else avail=yes; fi
+      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=%s channel=beta target=-\n' \
+        "$manifest_v" "${local_full:0:7}" "${remote_full:0:7}" "$avail"
       exit 0
     fi
-    if [[ "$local_full" == "$remote_full" ]]; then avail=no; else avail=yes; fi
-    printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=%s\n' \
-      "$manifest_v" "${local_full:0:7}" "${remote_full:0:7}" "$avail"
+    # Stable channel: highest vX.Y.Z-stable tag via ls-remote (no fetch!).
+    # Peel annotated tags (prefer the ^{} line, else the tag line), then pick
+    # the highest semver with sort -V.
+    if command -v timeout >/dev/null 2>&1; then
+      upd_ls=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" ls-remote origin 'refs/tags/v*-stable')
+    else
+      upd_ls=(git -C "$plugindir" ls-remote origin 'refs/tags/v*-stable')
+    fi
+    stable_out=""; stable_rc=0
+    if stable_out="$("${upd_ls[@]}" 2>/dev/null)"; then
+      stable_rc=0
+    else
+      stable_rc=$?
+      stable_out=""
+    fi
+    if (( stable_rc != 0 )); then
+      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=unknown available=unknown channel=stable target=-\n' \
+        "$manifest_v" "$local_short"
+      printf 'update-check: cannot reach origin (offline?)\n' >&2
+      exit 0
+    fi
+    declare -A stable_shas=()
+    while IFS=$'\t' read -r s_sha s_ref; do
+      [[ "${s_sha:-}" =~ ^[0-9a-f]{40}$ ]] || continue
+      if [[ "${s_ref:-}" =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+-stable)\^\{\}$ ]]; then
+        stable_shas["${BASH_REMATCH[1]}"]="$s_sha"
+      elif [[ "${s_ref:-}" =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+-stable)$ ]]; then
+        [[ -n "${stable_shas[${BASH_REMATCH[1]}]:-}" ]] || stable_shas["${BASH_REMATCH[1]}"]="$s_sha"
+      fi
+    done <<<"$stable_out"
+    if (( ${#stable_shas[@]} == 0 )); then
+      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=unknown available=unknown channel=stable target=-\n' \
+        "$manifest_v" "$local_short"
+      printf 'update-check: no stable release published yet\n' >&2
+      exit 0
+    fi
+    stable_tag="$(printf '%s\n' "${!stable_shas[@]}" | update_pick_highest_stable)"
+    if [[ -z "$stable_tag" ]]; then
+      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=unknown available=unknown channel=stable target=-\n' \
+        "$manifest_v" "$local_short"
+      printf 'update-check: no stable release published yet\n' >&2
+      exit 0
+    fi
+    target_full="${stable_shas[$stable_tag]}"
+    [[ "$target_full" =~ ^[0-9a-f]{40}$ ]] || target_full=""
+    # Peel annotated tags: the discovery ls-remote above (refs/tags/v*-stable)
+    # does not return ^{} lines on all servers, so resolve the peeled commit
+    # explicitly and prefer it; lightweight tags have no ^{} ref and keep the
+    # tag-line SHA (which already is the commit). Still no fetch, read-only.
+    if [[ -n "$stable_tag" ]]; then
+      if command -v timeout >/dev/null 2>&1; then
+        peel_ls=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" ls-remote origin "refs/tags/$stable_tag^{}")
+      else
+        peel_ls=(git -C "$plugindir" ls-remote origin "refs/tags/$stable_tag^{}")
+      fi
+      peel_out="$("${peel_ls[@]}" 2>/dev/null | head -n 1 || true)"
+      peel_sha="${peel_out%%[[:space:]]*}"
+      if [[ "$peel_sha" =~ ^[0-9a-f]{40}$ ]]; then
+        target_full="$peel_sha"
+      fi
+    fi
+    if [[ -z "$target_full" ]]; then
+      printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=unknown available=unknown channel=stable target=-\n' \
+        "$manifest_v" "$local_short"
+      printf 'update-check: cannot resolve stable tag %s\n' "$stable_tag" >&2
+      exit 0
+    fi
+    if [[ -z "$local_full" ]]; then
+      printf 'UPDATE_CHECK local_version=%s local_sha=unknown remote_sha=%s available=unknown channel=stable target=%s\n' \
+        "$manifest_v" "${target_full:0:7}" "$stable_tag"
+      printf 'update-check: cannot read local HEAD\n' >&2
+      exit 0
+    fi
+    if [[ "$local_full" == "$target_full" ]]; then avail=no; else avail=yes; fi
+    printf 'UPDATE_CHECK local_version=%s local_sha=%s remote_sha=%s available=%s channel=stable target=%s\n' \
+      "$manifest_v" "${local_full:0:7}" "${target_full:0:7}" "$avail" "$stable_tag"
     ;;
   update-apply)
-    # Plugin-manager update + rescan so the new QML hot-loads. Never touches
-    # queue/state/mpv; never deletes anything. Propagates the update exit code.
+    # update-apply [stable|beta] (default beta).
+    # Beta: plugin-manager update + rescan (current behavior, unchanged).
+    # Stable: fetch tags -> resolve highest vX.Y.Z-stable locally -> refuse
+    # when dirty -> reset --hard to the tag commit -> rescan.
+    # Never touches queue/state/mpv; never deletes anything.
+    upd_channel="${2:-beta}"
+    if [[ "$upd_channel" != stable && "$upd_channel" != beta ]]; then
+      printf 'update-apply must be stable|beta\n' >&2
+      exit 2
+    fi
     plugindir="$(update_plugin_dir)"
     if [[ -d "$plugindir/.git" ]]; then
       origin_url=""; origin_rc=0
@@ -1484,20 +1697,74 @@ case "${1:-}" in
         printf 'refusing update-apply: origin is not %s (anti-hijack)\n' "$UPDATE_UPSTREAM" >&2
         exit 2
       fi
-      # rc==2 (no git binary / no origin): proceed via the plugin manager,
-      # which is the trusted path for such installs.
+      # rc==2 (no git binary / no origin): beta proceeds via the plugin
+      # manager, which is the trusted path for such installs; stable needs
+      # git and fails below with a clear error.
     fi
+    if [[ "$upd_channel" == beta ]]; then
+      if command -v timeout >/dev/null 2>&1; then
+        upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus)
+      else
+        upd_cmd=(omarchy plugin update local.ytmusic-plus)
+      fi
+      if "${upd_cmd[@]}"; then
+        upd_rc=0
+      else
+        upd_rc=$?
+      fi
+      if (( upd_rc != 0 )); then exit "$upd_rc"; fi
+      if command -v omarchy-shell >/dev/null 2>&1; then
+        if command -v timeout >/dev/null 2>&1; then
+          rescan_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" omarchy-shell shell rescanPlugins)
+        else
+          rescan_cmd=(omarchy-shell shell rescanPlugins)
+        fi
+        "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
+      fi
+      new_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
+      if [[ "$new_full" =~ ^[0-9a-f]{40}$ ]]; then new_short="${new_full:0:7}"; else new_short="unknown"; fi
+      printf 'UPDATE_APPLIED %s\n' "$new_short"
+      exit 0
+    fi
+    # Stable channel: fetch tags, reset to the highest stable tag.
+    # reset --hard stays on the current branch (behind HEAD) — future pulls
+    # fast-forward normally; we never create/check out a detached HEAD or a
+    # new branch, so the user is never stranded.
+    if [[ ! -d "$plugindir/.git" ]]; then
+      printf 'update-apply: not a git checkout - update via: omarchy plugin update local.ytmusic-plus\n' >&2
+      exit 1
+    fi
+    command -v git >/dev/null 2>&1 || { printf 'update-apply: git not found\n' >&2; exit 1; }
     if command -v timeout >/dev/null 2>&1; then
-      upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus)
+      fetch_cmd=(timeout -s TERM 60 git -C "$plugindir" fetch --tags origin)
     else
-      upd_cmd=(omarchy plugin update local.ytmusic-plus)
+      fetch_cmd=(git -C "$plugindir" fetch --tags origin)
     fi
-    if "${upd_cmd[@]}"; then
-      upd_rc=0
-    else
-      upd_rc=$?
+    if ! "${fetch_cmd[@]}"; then
+      printf 'update-apply: git fetch --tags failed (offline?)\n' >&2
+      exit 1
     fi
-    if (( upd_rc != 0 )); then exit "$upd_rc"; fi
+    tag_list="$(git -C "$plugindir" tag --list 'v*-stable' 2>/dev/null || true)"
+    stable_tag="$(printf '%s\n' "$tag_list" | update_pick_highest_stable || true)"
+    if [[ -z "$stable_tag" ]]; then
+      printf 'update-apply: no stable release published yet\n' >&2
+      exit 1
+    fi
+    target_sha="$(git -C "$plugindir" rev-parse --verify "refs/tags/$stable_tag^{commit}" 2>/dev/null || true)"
+    [[ "$target_sha" =~ ^[0-9a-f]{40}$ ]] || target_sha=""
+    if [[ -z "$target_sha" ]]; then
+      printf 'update-apply: cannot resolve tag %s\n' "$stable_tag" >&2
+      exit 1
+    fi
+    # REFUSE when dirty: a reset would strand uncommitted work, so never do it.
+    if [[ -n "$(git -C "$plugindir" status --porcelain 2>/dev/null || true)" ]]; then
+      printf 'update-apply: working tree is dirty - commit or stash changes first (refusing to reset)\n' >&2
+      exit 2
+    fi
+    if ! git -C "$plugindir" reset --hard "$target_sha"; then
+      printf 'update-apply: git reset --hard %s failed\n' "$stable_tag" >&2
+      exit 1
+    fi
     if command -v omarchy-shell >/dev/null 2>&1; then
       if command -v timeout >/dev/null 2>&1; then
         rescan_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" omarchy-shell shell rescanPlugins)
@@ -1506,12 +1773,10 @@ case "${1:-}" in
       fi
       "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
     fi
-    new_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
-    if [[ "$new_full" =~ ^[0-9a-f]{40}$ ]]; then new_short="${new_full:0:7}"; else new_short="unknown"; fi
-    printf 'UPDATE_APPLIED %s\n' "$new_short"
+    printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear|update-check|update-apply|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts|tunes QUERY|radio TAG|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
     exit 2
     ;;
 esac
