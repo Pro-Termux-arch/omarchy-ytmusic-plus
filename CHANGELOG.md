@@ -1,13 +1,26 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **12** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable)
+Updates so far: **13** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1.2 stable (current)
+## v2.1.3 stable (current)
+
+> Updates actually finish: after applying, the popup verifies the new UI
+> really loaded — manual updates reload the shell automatically when stale,
+> background updates ask for a restart instead of silently lagging.
+
+- Stale-UI detector compares compiled appVersion against on-disk manifest
+  (trailing-zero tolerant, so v2 == 2.0.0)
+- Manual Update re-checks after 5s: fresh → "UI reloaded", stale →
+  "Reloading shell..." + shell restart (apps stay open)
+- Background auto-updates never surprise-restart: persistent notice names
+  the version waiting for a restart
+
+## v2.1.2 stable
 
 > Test release: version bump only, no functional changes — exercises the
 > smooth-update path (auto-stash, rescan, version flip) end to end.

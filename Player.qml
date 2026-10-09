@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.1.2 stable"
+  readonly property string appVersion: "v2.1.3 stable"
 
   property bool opened: false
   property bool searching: false
@@ -83,6 +83,8 @@ Item {
   property int updateLastCheck: 0
   property bool updateChecking: false
   property bool updateAutoChecked: false
+  property bool updateVerifyPending: false
+  property bool updateManualApply: false
   property string eqPresetName: "flat"
   property var eqGainsArr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   readonly property var eqBands: ["31", "62", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"]
@@ -971,6 +973,8 @@ Item {
       updateAvailable = false
       if (noGit) updateStatusText = "Not a git checkout - update via omarchy plugin update"
       else updateStatusText = "Check failed"
+      root.updateVerifyPending = false
+      root.updateManualApply = false
       return
     }
     var avail = updateField(found, "available")
@@ -987,25 +991,50 @@ Item {
     if (avail !== "yes" && avail !== "no" && avail !== "unknown") {
       updateAvailable = false
       updateStatusText = "Check failed"
+      root.updateVerifyPending = false
+      root.updateManualApply = false
       return
     }
     if ((avail === "yes" || avail === "no") && (ls === "" || ls === "unknown" || rs === "" || rs === "unknown" || lv === "")) {
       updateAvailable = false
       updateStatusText = "Check failed"
+      root.updateVerifyPending = false
+      root.updateManualApply = false
       return
     }
     if (avail === "yes") {
       updateAvailable = true
       updateStatusText = "Update available (" + ls + " -> " + rs + ")"
       recordUpdateCheck()
-      if (!updateCheckProc.manual && updateAuto) applyUpdate()
+      if (root.updateVerifyPending || root.updateManualApply) {
+        root.updateVerifyPending = false
+        root.updateManualApply = false
+        root.errorMessage = "Update still available - retry"
+      } else if (!updateCheckProc.manual && updateAuto) applyUpdate()
     } else if (avail === "no") {
       updateAvailable = false
       updateStatusText = "Up to date (v" + lv + " - " + ls + ")"
       recordUpdateCheck()
+      if (!root.uiMatchesDisk()) {
+        if (root.updateManualApply) {
+          root.notice = "Reloading shell to finish update..."
+          root.noticeTimer.restart()
+          shellRestartProc.command = ["omarchy", "restart", "shell"]
+          shellRestartProc.running = true
+        } else {
+          root.notice = "Updated - restart shell to reload v" + lv
+        }
+      } else if (root.updateManualApply) {
+        root.notice = "Updated - UI reloaded"
+        root.noticeTimer.restart()
+      }
+      root.updateVerifyPending = false
+      root.updateManualApply = false
     } else {
       updateAvailable = false
       updateStatusText = "Check failed: " + (errReason || "network unreachable")
+      root.updateVerifyPending = false
+      root.updateManualApply = false
     }
   }
 
@@ -1021,7 +1050,19 @@ Item {
     return s.slice(0, 20)
   }
 
-  function applyUpdate() {
+  function uiMatchesDisk() {
+    var a = String((String(appVersion).match(/\d+(\.\d+)*/) || [""])[0] || "")
+    var b = String((String(updateLocalVersion).match(/\d+(\.\d+)*/) || [""])[0] || "")
+    if (a === "" || b === "") return false
+    var ap = a.split(".")
+    var bp = b.split(".")
+    while (ap.length > 1 && Number(ap[ap.length - 1]) === 0) ap.pop()
+    while (bp.length > 1 && Number(bp[bp.length - 1]) === 0) bp.pop()
+    return ap.join(".") === bp.join(".")
+  }
+
+  function applyUpdate(manual) {
+    root.updateManualApply = !!manual
     if (updateApplyProc.running) return
     updateApplyProc.collected = ""
     updateApplyProc.command = ["bash", scriptPath, "update-apply", updateChannel]
@@ -1339,14 +1380,31 @@ Item {
           root.updateLocalSha = sha
           root.updateStatusText = "Up to date (v" + root.updateLocalVersion + " - " + sha + ")"
         }
-        root.notice = "Updated to " + (sha || "latest") + " - UI reloaded"
+        root.updateVerifyPending = true
+        root.notice = root.updateManualApply ? ("Updated to " + (sha || "latest") + " - verifying reload...") : ("Updated to " + (sha || "latest"))
         root.noticeTimer.restart()
+        if (root.updateManualApply) verifyTimer.restart()
       } else {
         var reason = String(updateApplyError.text || "").trim().split("\n")[0] || ("exit " + code)
         root.errorMessage = reason
         root.updateStatusText = reason.length > 60 ? reason.slice(0, 57) + "..." : reason
       }
     }
+  }
+
+  Timer {
+    id: verifyTimer
+    interval: 5000
+    repeat: false
+    onTriggered: {
+      if (!root.updateVerifyPending) return
+      root.updateVerifyPending = false
+      root.checkUpdates(false)
+    }
+  }
+
+  Process {
+    id: shellRestartProc
   }
 
   // Font installer: stdout carries the detected family name.
@@ -2979,7 +3037,7 @@ Item {
               visible: root.updateAvailable && !root.updateChecking
               height: Style.space(18)
               hPad: 12
-              tapped: function() { root.applyUpdate() }
+              tapped: function() { root.applyUpdate(true) }
             }
           }
           Text {
