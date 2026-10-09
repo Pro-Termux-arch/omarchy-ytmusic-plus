@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.2.1 stable"
+  readonly property string appVersion: "v2.2.2 stable"
 
   property bool opened: false
   property bool searching: false
@@ -339,6 +339,23 @@ Item {
     artistProc.collected = ""
     artistProc.command = ["bash", scriptPath, "artist-list"]
     artistProc.running = true
+  }
+
+  // Artist find-as-you-type: argv-only artist-find, results into
+  // artistFindModel as [{name, art, genre}]. Short queries clear silently;
+  // backend miss/offline clears silently too (Enter with zero results falls
+  // back to direct-query-as-profile in the search field handler).
+  function findArtists(q) {
+    var s = sanitizeText(String(q || "")).trim()
+    if (s.length < 2) { artistFindModel.clear(); artistFinding = false; return }
+    if (s.length > 100) s = s.slice(0, 100)
+    artistFindQuery = s
+    if (artistFindProc.running) { artistFindProc.pendingQuery = s; artistFindProc.refetch = true; return }
+    artistFinding = true
+    artistFindProc.query = s
+    artistFindProc.collected = ""
+    artistFindProc.command = ["bash", scriptPath, "artist-find", s]
+    artistFindProc.running = true
   }
 
   function loadArtistProfile(name) {
@@ -1111,13 +1128,13 @@ Item {
       if (!root.uiMatchesDisk()) {
         if (root.updateManualApply) {
           root.notice = "Updated - copy the restart command below"
-          root.noticeTimer.restart()
+          noticeTimer.restart()
         } else {
           root.notice = "Updated - restart shell to reload v" + lv
         }
       } else if (root.updateManualApply) {
         root.notice = "Updated - UI reloaded"
-        root.noticeTimer.restart()
+        noticeTimer.restart()
       }
       root.updateVerifyPending = false
       root.updateManualApply = false
@@ -1308,8 +1325,14 @@ Item {
   ListModel { id: homeModel }
   ListModel { id: artistModel }
   ListModel { id: artistSongsModel }
+  ListModel { id: artistFindModel }
   property string artistProfile: ""
   property bool artistLoading: false
+  // Artist find-as-you-type state (argv-only artist-find, silent on
+  // miss/offline). artistFindQuery holds the latest query so a
+  // late reply can never overwrite newer results.
+  property bool artistFinding: false
+  property string artistFindQuery: ""
   // Artist detail sidecar (best-effort portrait/bio/subs/genre, silent when
   // the backend has no artist-profile yet). artistBioOpen toggles the bio.
   property string artistBio: ""
@@ -1484,7 +1507,7 @@ Item {
         }
         root.updateVerifyPending = true
         root.notice = root.updateManualApply ? ("Updated to " + (sha || "latest") + " - verifying reload...") : ("Updated to " + (sha || "latest"))
-        root.noticeTimer.restart()
+        noticeTimer.restart()
         if (root.updateManualApply) verifyTimer.restart()
       } else {
         var reason = String(updateApplyError.text || "").trim().split("\n")[0] || ("exit " + code)
@@ -1510,7 +1533,7 @@ Item {
     onExited: function(code) {
       if (code === 0) {
         root.notice = "Copied - paste in a terminal"
-        root.noticeTimer.restart()
+        noticeTimer.restart()
       } else {
         restartCmdInput.selectAll()
         root.notice = "Copy failed - select the text + Ctrl+C"
@@ -1534,7 +1557,7 @@ Item {
       if (family) {
         root.customFontName = family
         root.notice = "Font: " + family
-        root.noticeTimer.restart()
+        noticeTimer.restart()
       }
       root.loadSettings()
     }
@@ -1707,6 +1730,62 @@ Item {
         var nxt = pendingName ? String(pendingName) : String(root.artistProfile)
         pendingName = ""
         if (nxt) root.loadArtistProfile(nxt)
+      }
+    }
+  }
+
+  // Artist find-as-you-type: argv-only, empty-graceful (miss/offline clears
+  // silently, never an error flash while typing). Stale replies (query
+  // mismatch with artistFindQuery) are dropped; a queued keystroke refetches
+  // with the latest query on exit. Trusts the backend artist-find payload.
+  Process {
+    id: artistFindProc
+    property string collected: ""
+    property string query: ""
+    property string pendingQuery: ""
+    property bool refetch: false
+    stdout: SplitParser { onRead: function(line) { artistFindProc.collected += line + "\n" } }
+    onStarted: collected = ""
+    onExited: function(code) {
+      var mine = String(query || "")
+      var latest = String(root.artistFindQuery || "")
+      if (mine !== latest) {
+        if (refetch) {
+          refetch = false
+          var pq0 = String(pendingQuery || latest)
+          pendingQuery = ""
+          if (pq0) root.findArtists(pq0)
+          else artistFinding = false
+        } else {
+          artistFinding = false
+        }
+        return
+      }
+      artistFinding = false
+      if (code === 0) {
+        try {
+          var arr = JSON.parse(String(collected || "[]"))
+          artistFindModel.clear()
+          for (var i = 0; i < arr.length; i++) {
+            var r = arr[i] || {}
+            var nm = String(sanitizeText(r.name) || "").trim()
+            if (!nm) continue
+            var at = String(r.art || "")
+            if (!isSafeImageUrl(at) || !/^https:/i.test(at.trim())) at = ""
+            var gn = String(sanitizeText(r.genre || "")).trim()
+            artistFindModel.append({ name: nm, art: at, genre: gn })
+          }
+        } catch (e) {
+          artistFindModel.clear()
+        }
+      } else {
+        artistFindModel.clear()
+      }
+      if (refetch) {
+        refetch = false
+        var pq = String(pendingQuery || "")
+        pendingQuery = ""
+        if (pq) root.findArtists(pq)
       }
     }
   }
@@ -2243,14 +2322,14 @@ Item {
                     root.runCmd(["artist-unfollow", nm])
                     root.currentFollowed = false
                     root.notice = "Unfollowed"
-                    root.noticeTimer.restart()
+                    noticeTimer.restart()
                   } else {
                     var art = String(root.currentThumbnail || "").trim()
                     if (root.isSafeImageUrl(art) && /^https:/i.test(art)) root.runCmd(["artist-follow", nm, art])
                     else root.runCmd(["artist-follow", nm])
                     root.currentFollowed = true
                     root.notice = "Followed"
-                    root.noticeTimer.restart()
+                    noticeTimer.restart()
                   }
                   if (root.homeMode === "artist") root.reloadArtists()
                 }
@@ -2786,9 +2865,9 @@ Item {
                 btnSize: Style.space(18)
                 tip: "Refresh feed"
                 tapped: function() {
-                  root.homeModel.clear()
+                  homeModel.clear()
                   root.notice = "Refreshing feed..."
-                  root.noticeTimer.restart()
+                  noticeTimer.restart()
                   if (root.homeMode === "artist") {
                     try { artistModel.clear() } catch (e2) {}
                     try { root.reloadArtists() } catch (e3) {}
@@ -2814,28 +2893,6 @@ Item {
               visible: root.homeMore
               spacing: Style.space(5)
               Rectangle {
-                width: radioMiniLabel.width + Style.space(14)
-                height: Style.space(22)
-                radius: height / 2
-                color: root.homeMode === "radio" ? root.accent : "transparent"
-                border.width: 1
-                border.color: root.homeMode === "radio" ? root.accent : root.muted
-                Text {
-                  id: radioMiniLabel
-                  anchors.centerIn: parent
-                  text: "Radio"
-                  color: root.homeMode === "radio" ? root.onAccent : root.muted
-                  font.family: root.uiFont
-                  font.pixelSize: Style.font.caption
-                  font.bold: root.homeMode === "radio"
-                }
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.setHomeMode("radio")
-                }
-              }
-              Rectangle {
                 width: tunesMiniLabel.width + Style.space(14)
                 height: Style.space(22)
                 radius: height / 2
@@ -2859,45 +2916,6 @@ Item {
               }
             }
 
-            // Radio genre tags (under More)
-            Item {
-              width: parent.width
-              height: visible ? Style.space(26) : 0
-              visible: root.homeMore && root.homeMode === "radio"
-              clip: true
-              ListView {
-                anchors.fill: parent
-                orientation: ListView.Horizontal
-                model: ["pop", "rock", "hiphop", "jazz", "classical", "electronic", "lofi", "ambient", "metal", "news", "chill", "dance"]
-                spacing: Style.space(5)
-                clip: true
-                delegate: Rectangle {
-                  height: Style.space(24)
-                  width: tagLabel.width + Style.space(14)
-                  radius: height / 2
-                  color: root.homeRadioTag === modelData ? root.accent : "transparent"
-                  border.width: 1
-                  border.color: root.homeRadioTag === modelData ? root.accent : root.muted
-                  Text {
-                    id: tagLabel
-                    anchors.centerIn: parent
-                    text: modelData
-                    color: root.homeRadioTag === modelData ? root.onAccent : root.ink
-                    font.family: root.uiFont
-                    font.pixelSize: Style.font.caption
-                  }
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                      root.homeRadioTag = modelData
-                      root.homeModel.clear()
-                      root.reloadHome()
-                    }
-                  }
-                }
-              }
-            }
 
             // Tune search (iTunes, free, previews, under More)
             Rectangle {
@@ -2932,7 +2950,7 @@ Item {
                   if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                     homeTunesTimer.stop()
                     root.homeTunesQuery = text.trim()
-                    root.homeModel.clear()
+                    homeModel.clear()
                     root.reloadHome()
                     event.accepted = true
                   }
@@ -2977,7 +2995,9 @@ Item {
                     font.pixelSize: Style.font.bodySmall
                     clip: true
                     onTextChanged: {
-                      if (text.trim().length >= 2) artistSearchTimer.restart()
+                      var fq = text.trim()
+                      if (fq.length >= 2) artistSearchTimer.restart()
+                      else { artistSearchTimer.stop(); artistFindModel.clear(); root.artistFinding = false }
                     }
                     Text {
                       text: "Search artist... (follow to build roster)"
@@ -2988,11 +3008,81 @@ Item {
                     Keys.onPressed: function(event) {
                       if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                         artistSearchTimer.stop()
-                        root.loadArtistProfile(text.trim())
+                        if (artistFindModel.count > 0) root.loadArtistProfile(artistFindModel.get(0).name)
+                        else root.loadArtistProfile(text.trim())
                         event.accepted = true
                       }
                     }
                   }
+                }
+                ListView {
+                  id: artistFindList
+                  width: parent.width
+                  height: visible ? Math.min(artistFindModel.count * Style.space(51), Style.space(51) * 3 + Style.space(6)) : 0
+                  visible: root.artistProfile === "" && artistFindModel.count > 0
+                  opacity: visible ? 1 : 0
+                  Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                  model: artistFindModel
+                  clip: true
+                  spacing: Style.space(3)
+                  delegate: Rectangle {
+                    required property string name
+                    required property string art
+                    required property string genre
+                    width: ListView.view ? ListView.view.width : 0
+                    height: Style.space(48)
+                    radius: Style.space(7)
+                    color: artistFindHover.containsMouse ? root.raised : "transparent"
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Row {
+                      z: 2
+                      anchors.fill: parent
+                      anchors.leftMargin: Style.space(4)
+                      anchors.rightMargin: Style.space(6)
+                      spacing: Style.space(7)
+                      Rectangle {
+                        width: Style.space(38)
+                        height: width
+                        radius: Style.space(5)
+                        color: root.raised
+                        clip: true
+                        anchors.verticalCenter: parent.verticalCenter
+                        Image { anchors.fill: parent; source: art; fillMode: Image.PreserveAspectCrop; asynchronous: true; opacity: status === Image.Ready ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } } }
+                        Text {
+                          anchors.centerIn: parent
+                          visible: art === ""
+                          text: "A"
+                          color: root.muted
+                          font.family: root.uiFont
+                          font.pixelSize: Style.font.bodySmall
+                          font.bold: true
+                        }
+                      }
+                      Column {
+                        width: parent.width - Style.space(38) - parent.spacing
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(2)
+                        Text { width: parent.width; text: name; textFormat: Text.PlainText; color: root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: true; elide: Text.ElideRight }
+                        Text { width: parent.width; visible: genre !== ""; text: genre; textFormat: Text.PlainText; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
+                      }
+                    }
+                    MouseArea {
+                      id: artistFindHover
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.loadArtistProfile(name)
+                    }
+                  }
+                }
+                Text {
+                  width: parent.width
+                  visible: root.artistFinding
+                  text: "Finding artists..."
+                  color: root.muted
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                  horizontalAlignment: Text.AlignHCenter
                 }
                 Text {
                   width: parent.width
@@ -3020,7 +3110,7 @@ Item {
                       SettingBtn {
                         label: "Back"
                         anchors.verticalCenter: parent.verticalCenter
-                        tapped: function() { root.artistProfile = ""; root.artistSongsModel.clear(); root.reloadArtists() }
+                        tapped: function() { root.artistProfile = ""; artistSongsModel.clear(); root.reloadArtists() }
                       }
                       Rectangle {
                         width: Style.space(42)
@@ -3034,8 +3124,12 @@ Item {
                           fillMode: Image.PreserveAspectCrop
                           asynchronous: true
                           source: {
-                            if (root.artistPortrait !== "") return root.artistPortrait
                             var n = root.artistProfile
+                            for (var f = 0; f < artistFindModel.count; f++) {
+                              var fm = artistFindModel.get(f)
+                              if (fm.name === n && fm.art) return fm.art
+                            }
+                            if (root.artistPortrait !== "") return root.artistPortrait
                             for (var i = 0; i < artistModel.count; i++) {
                               var m = artistModel.get(i)
                               if (m.name === n && m.art) return m.art
@@ -3049,8 +3143,11 @@ Item {
                         Text {
                           anchors.centerIn: parent
                           visible: {
-                            if (root.artistPortrait !== "") return false
                             var n2 = root.artistProfile
+                            for (var f2 = 0; f2 < artistFindModel.count; f2++) {
+                              if (artistFindModel.get(f2).name === n2 && artistFindModel.get(f2).art) return false
+                            }
+                            if (root.artistPortrait !== "") return false
                             for (var j = 0; j < artistModel.count; j++) {
                               if (artistModel.get(j).name === n2 && artistModel.get(j).art) return false
                             }
@@ -3332,7 +3429,7 @@ Item {
                 id: artistSearchTimer
                 interval: 600
                 repeat: false
-                onTriggered: root.loadArtistProfile(artistSearchField.text.trim())
+                onTriggered: root.findArtists(artistSearchField.text.trim())
               }
             }
 
@@ -3375,7 +3472,7 @@ Item {
           repeat: false
           onTriggered: {
             root.homeTunesQuery = homeTunesField.text.trim()
-            root.homeModel.clear()
+            homeModel.clear()
             root.reloadHome()
           }
         }
@@ -3817,7 +3914,7 @@ Item {
                   tapped: function() {
                     root.runCmd(["cache-clear"])
                     root.notice = "Caches cleared"
-                    root.noticeTimer.restart()
+                    noticeTimer.restart()
                   }
                 }
               }

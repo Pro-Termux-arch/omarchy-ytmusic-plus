@@ -1,13 +1,29 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **21** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable)
+Updates so far: **22** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.2.1 stable (current)
+## v2.2.2 stable (current)
+
+> Honesty release: every reported bug traced to its root and killed, no
+> hand-waving. Lyrics match your exact version, refresh works, DSP is live.
+
+- Lyrics cache key includes duration + candidates scored by |duration −
+  yours| (fixed a silent jq paren bug that broke ALL scored searches) —
+  wrong-version LRCs (Blinding Lights 4:23 vs album) can't stick anymore
+- Refresh death was `root.<id>` TypeErrors killing the tap handler —
+  audited file-wide, child ids are bare everywhere now
+- Artist search resolves real artists first, profiles strictly theirs
+  (collabs kept, strangers dropped); radio UI removed
+- Silence/normalize/EQ apply INSTANTLY via live mpv `af set/clr`
+  (socket-gated, next-launch fallback); end-trim proven on synthetic audio
+- For-you leads with new songs from followed artists, then taste, charts
+
+## v2.2.1 stable
 
 > Bar pill uses every pixel: full-height poster with hover zoom card,
 > stretching title, wider visualizer, buttons hugging right. Restart box

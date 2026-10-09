@@ -276,10 +276,11 @@ eq_preset_gains() {
 
 # Fills global DSP_ARGS (+VOL, +LOOP_ONE) from settings. Silence trim, loudness
 # normalize and the 10-band EQ are launch-time mpv args, so toggles apply from
-# the next track. Zero EQ bands are skipped so flat costs nothing. The silence
-# trim is lead-in only (no stop_periods): end-trim truncates the stream at the
-# FIRST sub-floor silence anywhere, dropping mid-song breaks, quiet verses and
-# everything after them, which mpv reports as an early EOF.
+# the next track (plus best-effort live `af set/clr` in `set`). Zero EQ bands
+# are skipped so flat costs nothing. The silence trim strips leading and
+# trailing silence (start_periods + stop_periods=1/1.5s): the trailing side
+# only fires on sustained end-silence, so mid-song breaks and quiet verses
+# survive.
 build_dsp_args() {
   DSP_ARGS=()
   VOL="$(sget volume 2>/dev/null || printf 70)"; [[ "$VOL" =~ ^[0-9]+$ ]] || VOL=70
@@ -1251,6 +1252,31 @@ case "${1:-}" in
     if [[ "$key" == eqPreset && "$val" != custom ]]; then
       sset eqGains "$(eq_preset_gains "$val")"
     fi
+    # Live-apply DSP toggles to the running mpv (best-effort, never fails the
+    # set). Rebuild via build_dsp_args (pure: only sets DSP_ARGS/VOL/LOOP_ONE),
+    # translate --af-append entries to a comma-joined chain, then `af set`
+    # (non-empty) or `af clr` (empty) when the socket is live.
+    if [[ "$key" == silence || "$key" == normalize || "$key" == eqPreset || "$key" == eqGains ]]; then
+      build_dsp_args || true
+      _af=""
+      for _e in ${DSP_ARGS[@]+"${DSP_ARGS[@]}"}; do
+        if [[ "$_e" == --af-append=* ]]; then
+          _f="${_e#--af-append=}"
+          _f="${_f#\'}"; _f="${_f%\'}"
+          _f="${_f#\"}"; _f="${_f%\"}"
+          if [[ -n "$_f" ]]; then
+            if [[ -z "$_af" ]]; then _af="$_f"; else _af="$_af,$_f"; fi
+          fi
+        fi
+      done || true
+      if [[ -S "$SOCKET" ]]; then
+        if [[ -n "$_af" ]]; then
+          ipc "{\"command\":[\"af\",\"set\",\"$_af\"]}" >/dev/null 2>&1 || true
+        else
+          ipc '{"command":["af","clr"]}' >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
     printf '%s=%s\n' "$key" "$val"
     ;;
   loop)
@@ -1536,7 +1562,15 @@ case "${1:-}" in
     artist="${2:-}"; title="${3:-}"; dur_str="${4:-}"
     prune_cache
     [[ -n "$title" ]] || exit 2
-    key="$CACHE_DIR/lyrics-$(sha1 "${artist}|||${title}")"
+    # Duration-scoped cache key: the same artist+title at a different length
+    # is a different version (remaster/live). dur_secs=0 when unparseable so
+    # a mismatched-cached-version is bypassed via its new key.
+    dur_secs=0
+    if _ds="$(dur_to_sec "$dur_str" 2>/dev/null)"; then
+      [[ "$_ds" =~ ^[0-9]+$ ]] || _ds=0
+      dur_secs="$_ds"
+    fi
+    key="$CACHE_DIR/lyrics-$(sha1 "${artist}|||${title}|||${dur_secs}")"
     now="$(date +%s)"
     if [[ -s "$key" ]]; then
       age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
@@ -1559,17 +1593,36 @@ case "${1:-}" in
         else empty end' 2>/dev/null || true
     }
     pick_many() {
-      jq -r 'if type != "array" or length == 0 then empty
-        else ((map(select(.syncedLyrics != null and .syncedLyrics != "")) | .[0].syncedLyrics)
-          // (map(select(.plainLyrics != null and .plainLyrics != "")) | .[0].plainLyrics)
-          // empty) end' 2>/dev/null || true
+      # Duration-scored: $1=want seconds (0=unknown). Prefer synced, then min
+      # |duration-want| (lrclib search items carry `duration`). Dur unknown ->
+      # first synced. Plain is the fallback in both modes.
+      local want="${1:-0}"
+      [[ "$want" =~ ^[0-9]+$ ]] || want=0
+      if (( want > 0 )); then
+        jq -r --argjson want "$want" '
+          if type != "array" or length == 0 then empty
+          else ((([ .[] | select(.syncedLyrics != null and .syncedLyrics != "")
+                    | {txt: .syncedLyrics, d: (((.duration // -1) | tostring | tonumber?) // -1)}]
+                  | map(. + {delta: (if .d >= 0 then ((.d - $want) | if . < 0 then -. else . end) else 999999 end)})
+                  | sort_by(.delta) | .[0].txt)
+                // ([ .[] | select(.plainLyrics != null and .plainLyrics != "")
+                    | {txt: .plainLyrics, d: (((.duration // -1) | tostring | tonumber?) // -1)}]
+                  | map(. + {delta: (if .d >= 0 then ((.d - $want) | if . < 0 then -. else . end) else 999999 end)})
+                  | sort_by(.delta) | .[0].txt)
+                // empty)) end' 2>/dev/null || true
+      else
+        jq -r 'if type != "array" or length == 0 then empty
+          else ((map(select(.syncedLyrics != null and .syncedLyrics != "")) | .[0].syncedLyrics)
+            // (map(select(.plainLyrics != null and .plainLyrics != "")) | .[0].plainLyrics)
+            // empty) end' 2>/dev/null || true
+      fi
     }
     out=""
-    if dur_secs="$(dur_to_sec "$dur_str" 2>/dev/null)" && (( dur_secs > 0 )); then
+    if (( dur_secs > 0 )); then
       out="$(pick_one <<<"$(fetch_get "$artist" "$title" "$dur_secs")")"
     fi
     if [[ -z "$out" ]]; then
-      out="$(pick_many <<<"$(fetch_search "$artist $title")")"
+      out="$(pick_many "$dur_secs" <<<"$(fetch_search "$artist $title")")"
     fi
     if [[ -z "$out" ]]; then
       # "Title (Official Video)" style suffixes poison exact matching —
@@ -1577,10 +1630,10 @@ case "${1:-}" in
       # backslashes, mangling titles like `Say "Hi"`. sed trims safely.
       bare="$(sed -e 's/ *(.*//' -e 's/ *\[.*//' -e 's/ *- *Official.*//I' -e 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$title")"
       if [[ -n "$bare" && "$bare" != "$title" ]]; then
-        if [[ -n "${dur_secs:-}" ]]; then
+        if (( dur_secs > 0 )); then
           out="$(pick_one <<<"$(fetch_get "$artist" "$bare" "$dur_secs")")"
         fi
-        [[ -z "$out" ]] && out="$(pick_many <<<"$(fetch_search "$artist $bare")")"
+        [[ -z "$out" ]] && out="$(pick_many "$dur_secs" <<<"$(fetch_search "$artist $bare")")"
       fi
     fi
     [[ -n "$out" ]] || { printf 'No lyrics found (instrumental?)\n' >&2; exit 1; }
@@ -1715,7 +1768,12 @@ case "${1:-}" in
           | {name: $disp, score: ($plays + 3 * $loves + $bonus)}]
         | sort_by(-.score) | .[0:3] | .[].name)
     ' 2>/dev/null || true)"
-    if [[ -z "${top3//[[:space:]]/}" ]]; then
+    # v2: taste-empty fallback only when no followed artists either; otherwise
+    # fall through to follow-new + charts fill below.
+    _has_followed=""
+    _has_followed="$(jq -r '[if type == "array" then .[] else empty end | select(type == "object") | select(((.name // "" | tostring) != ""))] | length' "$DATA_DIR/artists.json" 2>/dev/null || printf 0)"
+    [[ "$_has_followed" =~ ^[0-9]+$ ]] || _has_followed=0
+    if [[ -z "${top3//[[:space:]]/}" ]] && (( _has_followed == 0 )); then
       rss_fb="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
       ids_fb="$(jq -r '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | unique | .[0:30] | join(",")' <<<"$rss_fb" 2>/dev/null || true)"
       [[ -n "$ids_fb" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
@@ -1736,8 +1794,46 @@ case "${1:-}" in
     excl_lib_json="$(jq -c '[.[]? | select(type == "object") | (.title // "" | tostring | ascii_downcase) | select(. != "")] | unique' <<<"$lib_json" 2>/dev/null || printf '[]')"
     [[ "$excl_taste_json" =~ ^\[ ]] || excl_taste_json="[]"
     [[ "$excl_lib_json" =~ ^\[ ]] || excl_lib_json="[]"
-    mapfile -t artists <<<"$top3"
     out_all="[]"
+    # v2: "New from your artists" first — followed artists (cap 5), 3 songs
+    # each via a direct iTunes call mirroring artist-songs (strict artist
+    # match), same library/taste title exclusion, reason "New from <Artist>".
+    followed_names="$(jq -r '[if type == "array" then .[] else empty end | select(type == "object") | select(((.name // "" | tostring) != "")) | {name: (.name | tostring), at: (.followedAt // 0)}] | sort_by(.at) | reverse | .[0:5] | .[].name' "$DATA_DIR/artists.json" 2>/dev/null || true)"
+    if [[ -n "${followed_names//[[:space:]]/}" ]]; then
+      mapfile -t followed <<<"$followed_names"
+      for fartist in "${followed[@]}"; do
+        [[ -n "$fartist" ]] || continue
+        json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$fartist" --data-urlencode "media=music" --data-urlencode "entity=song" --data-urlencode "limit=10" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
+        [[ -n "$json" ]] || continue
+        rows="$(jq -c --arg an "$fartist" --argjson et "$excl_taste_json" --argjson el "$excl_lib_json" '
+          ($an | ascii_downcase) as $qn
+          | [(.results[]? | {
+            title: (.trackName // "Untitled"),
+            artist: (.artistName // "Unknown"),
+            art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100) | sub("100x100"; "300x300")) else "" end),
+            url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end),
+            kind: "preview",
+            reason: ((("New from " + ($an | tostring | .[0:40] | gsub("[^ -~]"; ""))) | .[0:60]))
+          }) | select(.title != "" and .artist != "")
+            | select((.artist | ascii_downcase) as $a
+              | $a == $qn
+                or ($a | startswith($qn + " & ") or startswith($qn + ", ")
+                  or startswith($qn + " feat ") or startswith($qn + " ft ")
+                  or startswith($qn + " ft. ") or startswith($qn + " x ")))
+            | select(((.title | ascii_downcase) as $lt | ($et | index($lt) == null) and ($el | index($lt) == null)))
+          ] | unique_by([(.title | ascii_downcase), (.artist | ascii_downcase)]) | .[0:3]
+        ' <<<"$json" 2>/dev/null || printf '[]')"
+        [[ -n "$rows" && "$rows" != "[]" ]] || continue
+        tmp_merge="$RUNTIME_DIR/foryou.merge.tmp"
+        if jq -c --argjson a "$out_all" --argjson b "$rows" -n '$a + $b' >"$tmp_merge" 2>/dev/null && [[ -s "$tmp_merge" ]]; then
+          out_all="$(cat -- "$tmp_merge")"
+          rm -f -- "$tmp_merge"
+        else
+          rm -f -- "$tmp_merge"
+        fi
+      done
+    fi
+    mapfile -t artists <<<"$top3"
     for artist in "${artists[@]}"; do
       [[ -n "$artist" ]] || continue
       json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$artist" --data-urlencode "media=music" --data-urlencode "entity=song" --data-urlencode "limit=15" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
@@ -1763,7 +1859,42 @@ case "${1:-}" in
         rm -f -- "$tmp_merge"
       fi
     done
-    final="$(jq -c '[.[] | {k: ([(.title | ascii_downcase), (.artist | ascii_downcase)] | join("\u0000")), v: .}] | reduce .[] as $e ([[], {}]; if .[1][$e.k] then . else [.[0] + [$e.v], .[1] + {($e.k): true}] end) | .[0] | .[0:18]' <<<"$out_all" 2>/dev/null || printf '')"
+    # Charts fill to 20 total (best-effort, existing RSS+lookup shape).
+    cur_len="$(jq 'length' <<<"$out_all" 2>/dev/null || printf 0)"
+    [[ "$cur_len" =~ ^[0-9]+$ ]] || cur_len=0
+    if (( cur_len < 20 )); then
+      need=$(( 20 - cur_len ))
+      rss_c="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -- "https://itunes.apple.com/us/rss/topsongs/limit=30/json" 2>/dev/null || true)"
+      ids_c="$(jq -r '[.feed.entry[]? | (.id.attributes."im:id" // empty)] | unique | .[0:30] | join(",")' <<<"$rss_c" 2>/dev/null || true)"
+      if [[ -n "$ids_c" ]]; then
+        lookup_c="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "id=$ids_c" --data-urlencode "entity=song" -- "https://itunes.apple.com/lookup" 2>/dev/null || true)"
+        if [[ -n "$lookup_c" ]]; then
+          crows="$(jq -c --argjson et "$excl_taste_json" --argjson el "$excl_lib_json" --argjson have "$out_all" --argjson need "$need" '
+            ($have | map([(.title // "" | ascii_downcase), (.artist // "" | ascii_downcase)] | join("\u0000"))) as $hk
+            | [.results[]? | select(.wrapperType == "track") | {
+                title: (.trackName // "Untitled"),
+                artist: (.artistName // "Unknown"),
+                art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100) | sub("100x100"; "300x300")) else "" end),
+                url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end),
+                kind: "chart", reason: "Trending now"}
+              | select(.title != "" and .artist != "")
+              | select(((.title | ascii_downcase) as $lt | ($et | index($lt) == null) and ($el | index($lt) == null)))
+              | select(([((.title | ascii_downcase)), ((.artist | ascii_downcase))] | join("\u0000") | IN($hk[]) | not))]
+            | unique_by([(.title | ascii_downcase), (.artist | ascii_downcase)]) | .[0:$need]
+          ' <<<"$lookup_c" 2>/dev/null || printf '[]')"
+          if [[ -n "$crows" && "$crows" != "[]" ]]; then
+            tmp_merge="$RUNTIME_DIR/foryou.merge.tmp"
+            if jq -c --argjson a "$out_all" --argjson b "$crows" -n '$a + $b' >"$tmp_merge" 2>/dev/null && [[ -s "$tmp_merge" ]]; then
+              out_all="$(cat -- "$tmp_merge")"
+              rm -f -- "$tmp_merge"
+            else
+              rm -f -- "$tmp_merge"
+            fi
+          fi
+        fi
+      fi
+    fi
+    final="$(jq -c '[.[] | {k: ([(.title | ascii_downcase), (.artist | ascii_downcase)] | join("\u0000")), v: .}] | reduce .[] as $e ([[], {}]; if .[1][$e.k] then . else [.[0] + [$e.v], .[1] + {($e.k): true}] end) | .[0] | .[0:20]' <<<"$out_all" 2>/dev/null || printf '')"
     [[ -n "$final" && "$final" != "[]" ]] || { printf 'Nothing here yet\n' >&2; exit 1; }
     tmp="$CACHE_DIR/foryou.json.tmp"
     if printf '%s' "$final" >"$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
@@ -1845,6 +1976,24 @@ case "${1:-}" in
     [[ -e "$afile" ]] || exit 1
     jq -e --arg n "$name" 'if type == "array" then ([.[]? | select(type == "object") | (.name // "" | tostring) | select(ascii_downcase == ($n | ascii_downcase))] | length > 0) else false end' "$afile" >/dev/null || exit 1
     ;;
+  artist-find)
+    require curl; require jq
+    query="${2:-}"
+    (( ${#query} >= 1 && ${#query} <= 100 )) || { printf 'bad artist query\n' >&2; exit 2; }
+    if [[ "$query" =~ [[:cntrl:]] ]]; then printf 'bad artist query\n' >&2; exit 2; fi
+    prune_cache
+    json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$query" --data-urlencode "media=music" --data-urlencode "entity=musicArtist" --data-urlencode "limit=10" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
+    [[ -n "$json" ]] || { printf 'nothing found\n' >&2; exit 1; }
+    out="$(jq -c '
+      [(.results[]? | {
+        name: (.artistName // ""),
+        art: (if ((.artworkUrl100 // "") | test("^https://")) then (.artworkUrl100) else "" end),
+        genre: (.primaryGenreName // "")}) | select(.name != "")]
+      | unique_by(.name | ascii_downcase)
+    ' <<<"$json" 2>/dev/null || true)"
+    [[ -n "$out" && "$out" != "[]" ]] || { printf 'nothing found\n' >&2; exit 1; }
+    printf '%s\n' "$out"
+    ;;
   artist-songs)
     require curl; require jq
     name="${2:-}"
@@ -1854,13 +2003,18 @@ case "${1:-}" in
     json="$(curl -sS -m "$CONNECT_TIMEOUT" --proto '=https' --max-filesize 2M -G --data-urlencode "term=$name" --data-urlencode "media=music" --data-urlencode "entity=song" --data-urlencode "limit=50" -- "https://itunes.apple.com/search" 2>/dev/null || true)"
     [[ -n "$json" ]] || { printf 'nothing found\n' >&2; exit 1; }
     out="$(jq -c --arg q "$name" '
-      [(.results[]? | {
+      ($q | ascii_downcase) as $qn
+      | [(.results[]? | {
         title: (.trackName // "Untitled"),
         artist: (.artistName // "Unknown"),
         art: (if ((.artworkUrl100 // "") | test("^https://")) then ((.artworkUrl100) | sub("100x100"; "300x300")) else "" end),
         url: (if ((.previewUrl // "") | test("^https://")) then .previewUrl else "" end),
-        kind: "preview"}) | select(.title != "" and .artist != "")]
-      | (map(select((.artist | ascii_downcase) == ($q | ascii_downcase))) + map(select((.artist | ascii_downcase) != ($q | ascii_downcase))))
+        kind: "preview"}) | select(.title != "" and .artist != "")
+        | select((.artist | ascii_downcase) as $a
+          | $a == $qn
+            or ($a | startswith($qn + " & ") or startswith($qn + ", ")
+              or startswith($qn + " feat ") or startswith($qn + " ft ")
+              or startswith($qn + " ft. ") or startswith($qn + " x ")))]
     ' <<<"$json" 2>/dev/null || true)"
     [[ -n "$out" && "$out" != "[]" ]] || { printf 'nothing found\n' >&2; exit 1; }
     printf '%s\n' "$out"
@@ -2216,7 +2370,7 @@ case "${1:-}" in
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-find QUERY|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
     exit 2
     ;;
 esac
