@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.1 stable"
+  readonly property string appVersion: "v2.1.1 stable"
 
   property bool opened: false
   property bool searching: false
@@ -1344,6 +1344,7 @@ Item {
       } else {
         var reason = String(updateApplyError.text || "").trim().split("\n")[0] || ("exit " + code)
         root.errorMessage = reason
+        root.updateStatusText = reason.length > 60 ? reason.slice(0, 57) + "..." : reason
       }
     }
   }
@@ -2089,6 +2090,8 @@ Item {
             visible: (root.notice !== "" || root.errorMessage !== "")
             opacity: visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            MouseArea { id: statusHover; anchors.fill: parent; hoverEnabled: true }
+            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: 400 }
           }
         }
 

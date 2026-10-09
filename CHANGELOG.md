@@ -1,13 +1,24 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **10** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable)
+Updates so far: **11** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1 stable (current)
+## v2.1.1 stable (current)
+
+> Updates smooth for everyone: dirty trees auto-stash before updating and
+> restore after — never blocked, never lost. Full error text on hover.
+
+- Beta + stable update-apply stash local changes first, pop after success;
+  pop conflicts keep the stash with recovery instructions
+- Failure output leads with a short actionable line, full detail after
+- Popup error shows full text on hover (was truncated); footer reflects
+  failures instead of going stale
+
+## v2.1 stable
 
 > Updater --yes fix, cold-start play-button fix, footer clip, visualizer
 > fast-start + smooth attack, animation masterpiece, double security pass.

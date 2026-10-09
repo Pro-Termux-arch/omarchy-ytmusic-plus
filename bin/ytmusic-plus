@@ -1703,10 +1703,47 @@ case "${1:-}" in
     ;;
   update-apply)
     # update-apply [stable|beta] (default beta).
-    # Beta: plugin-manager update + rescan (current behavior, unchanged).
-    # Stable: fetch tags -> resolve highest vX.Y.Z-stable locally -> refuse
-    # when dirty -> reset --hard to the tag commit -> rescan.
+    # Beta: stash-if-dirty -> plugin-manager update + rescan -> pop restore.
+    # Stable: fetch tags -> resolve highest vX.Y.Z-stable locally ->
+    # stash-if-dirty -> reset --hard to the tag commit -> rescan -> pop.
     # Never touches queue/state/mpv; never deletes anything.
+    # Shared stash helpers, scoped to this branch: UPDATED_STASHED tracks
+    # whether WE stashed so the matching restore can pop best-effort.
+    UPDATED_STASHED=0
+    update_stash_if_dirty() {
+      local _dir="$1" _channel="$2" _epoch="" _status="" _ref=""
+      local -a _porc_cmd _st_cmd _ref_cmd
+      _epoch="$(date +%s 2>/dev/null || printf '0')"
+      [[ "$_epoch" =~ ^[0-9]+$ ]] || _epoch=0
+      _porc_cmd=(git -C "$_dir" status --porcelain)
+      _status="$("${_porc_cmd[@]}" 2>/dev/null || true)"
+      if [[ -z "$_status" ]]; then
+        UPDATED_STASHED=0
+        return 0
+      fi
+      _st_cmd=(git -C "$_dir" stash push -m "ytmusic-plus auto-stash before ${_channel} update ${_epoch}")
+      if ! "${_st_cmd[@]}" >&2; then
+        printf 'update-apply: cannot stash local changes - commit them first (refusing to update)\n' >&2
+        exit 2
+      fi
+      UPDATED_STASHED=1
+      _ref_cmd=(git -C "$_dir" rev-parse -q --verify stash@{0})
+      _ref="$("${_ref_cmd[@]}" 2>/dev/null || true)"
+      printf 'update-apply: stashed local changes (%s)\n' "${_ref:-stash@{0}}" >&2
+      return 0
+    }
+    update_restore_stash() {
+      local _dir="$1"
+      local -a _pop_cmd
+      if [[ "${UPDATED_STASHED:-0}" != 1 ]]; then return 0; fi
+      _pop_cmd=(git -C "$_dir" stash pop)
+      if ! "${_pop_cmd[@]}" >&2; then
+        printf 'update-apply: updated OK - your local changes are kept in the stash: git -C %s stash show -p\n' "$_dir" >&2
+      else
+        UPDATED_STASHED=0
+      fi
+      return 0
+    }
     upd_channel="${2:-beta}"
     if [[ "$upd_channel" != stable && "$upd_channel" != beta ]]; then
       printf 'update-apply must be stable|beta\n' >&2
@@ -1725,17 +1762,44 @@ case "${1:-}" in
       # git and fails below with a clear error.
     fi
     if [[ "$upd_channel" == beta ]]; then
+      if [[ -d "$plugindir/.git" ]]; then
+        update_stash_if_dirty "$plugindir" beta
+      fi
       if command -v timeout >/dev/null 2>&1; then
         upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus --yes)
       else
         upd_cmd=(omarchy plugin update local.ytmusic-plus --yes)
       fi
-      if "${upd_cmd[@]}"; then
-        upd_rc=0
+      mgr_err=""
+      mgr_err="$(mktemp "$RUNTIME_DIR/ytmusic-plus-update.XXXXXX" 2>/dev/null || true)"
+      if [[ -n "$mgr_err" ]]; then
+        if "${upd_cmd[@]}" 2>"$mgr_err"; then
+          upd_rc=0
+        else
+          upd_rc=$?
+        fi
       else
-        upd_rc=$?
+        if "${upd_cmd[@]}"; then
+          upd_rc=0
+        else
+          upd_rc=$?
+        fi
       fi
-      if (( upd_rc != 0 )); then exit "$upd_rc"; fi
+      if (( upd_rc != 0 )); then
+        if [[ "${UPDATED_STASHED:-0}" == 1 ]]; then
+          beta_pop=(git -C "$plugindir" stash pop)
+          "${beta_pop[@]}" >/dev/null 2>&1 || true
+          UPDATED_STASHED=0
+        fi
+        printf 'update-apply: beta update failed (your tree was restored)\n' >&2
+        printf -- '--- detail ---\n' >&2
+        if [[ -n "$mgr_err" && -f "$mgr_err" ]]; then
+          head -n 3 -- "$mgr_err" >&2 || true
+        fi
+        [[ -n "$mgr_err" ]] && rm -f -- "$mgr_err" || true
+        exit "$upd_rc"
+      fi
+      [[ -n "$mgr_err" ]] && rm -f -- "$mgr_err" || true
       if command -v omarchy-shell >/dev/null 2>&1; then
         if command -v timeout >/dev/null 2>&1; then
           rescan_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" omarchy-shell shell rescanPlugins)
@@ -1744,6 +1808,7 @@ case "${1:-}" in
         fi
         "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
       fi
+      update_restore_stash "$plugindir"
       new_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
       if [[ "$new_full" =~ ^[0-9a-f]{40}$ ]]; then new_short="${new_full:0:7}"; else new_short="unknown"; fi
       printf 'UPDATE_APPLIED %s\n' "$new_short"
@@ -1779,13 +1844,17 @@ case "${1:-}" in
       printf 'update-apply: cannot resolve tag %s\n' "$stable_tag" >&2
       exit 1
     fi
-    # REFUSE when dirty: a reset would strand uncommitted work, so never do it.
-    if [[ -n "$(git -C "$plugindir" status --porcelain 2>/dev/null || true)" ]]; then
-      printf 'update-apply: working tree is dirty - commit or stash changes first (refusing to reset)\n' >&2
-      exit 2
-    fi
-    if ! git -C "$plugindir" reset --hard "$target_sha"; then
-      printf 'update-apply: git reset --hard %s failed\n' "$stable_tag" >&2
+    # Dirty work never blocks nor is lost: stash tracked changes, reset on a
+    # clean-or-stashed tree, then pop the stash back best-effort.
+    update_stash_if_dirty "$plugindir" stable
+    reset_cmd=(git -C "$plugindir" reset --hard "$target_sha")
+    if ! "${reset_cmd[@]}"; then
+      if [[ "${UPDATED_STASHED:-0}" == 1 ]]; then
+        stable_pop=(git -C "$plugindir" stash pop)
+        "${stable_pop[@]}" >/dev/null 2>&1 || true
+        UPDATED_STASHED=0
+      fi
+      printf 'update-apply: git reset --hard %s failed (your tree was restored)\n' "$stable_tag" >&2
       exit 1
     fi
     if command -v omarchy-shell >/dev/null 2>&1; then
@@ -1796,6 +1865,7 @@ case "${1:-}" in
       fi
       "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
     fi
+    update_restore_stash "$plugindir"
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
