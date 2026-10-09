@@ -1,11 +1,23 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **25** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta)
+Updates so far: **26** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
+
+## v2.2.6 beta
+
+> Silky, snappy, optional: two community-backed seekbar styles, liquid
+> wave motion, faster status, killable visualizer. Local-only beta.
+
+- Mirror bars (SoundCloud-style, seeded-stable) + neon glow pulse —
+  web-researched, pick from previews like the rest
+- Wave motion: 60fps linear phase + two-layer organic line, blunt gone
+- Status poll 1.5s → 1s (slowest UI latency halved)
+- Visualizer on/off setting (bar proc + bars gated, fail-open)
+- RAM diet explicitly deferred (later, not now)
 
 ## v2.2.5 beta
 

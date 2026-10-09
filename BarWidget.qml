@@ -41,6 +41,7 @@ BarWidget {
   property double lastActiveMs: 0
   property bool idleHidden: false
   property string barMode: "full"
+  property bool vizOn: true
 
   implicitWidth: root.barMode === "compact" ? (typeof barSize !== "undefined" ? barSize : Style.space(30)) : ((root.hasTrack && !root.idleHidden) ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : Style.space(30))
   implicitHeight: barSize
@@ -97,6 +98,7 @@ BarWidget {
     try {
       var status = JSON.parse(String(raw || "{}"))
       root.barMode = (status.barMode === "compact") ? "compact" : "full"
+      root.vizOn = (status.viz === "off") ? false : true
       root.playerRunning = status.running === true
       root.playing = root.playerRunning && status.paused !== true
       var newTitle = String(status.title || "").slice(0, 500)
@@ -240,6 +242,7 @@ BarWidget {
       }
 
       VizBars {
+        visible: root.vizOn
         width: Style.space(64)
         anchors.verticalCenter: parent.verticalCenter
         levels: root.vizLevels
@@ -443,7 +446,7 @@ BarWidget {
   }
 
   function tryStartViz() {
-    if (!root.hasTrack || !root.playing) return
+    if (!root.hasTrack || !root.playing || !root.vizOn) return
     if (vizProc.running) return
     var backoff = 0
     if (root.vizFailCount > 0) {
@@ -459,13 +462,13 @@ BarWidget {
   onHasTrackChanged: if (root.hasTrack && root.playing) root.tryStartViz()
 
   Timer {
-    interval: 1500
+    interval: 1000
     running: true
     repeat: true
     triggeredOnStart: true
     onTriggered: {
       root.refreshStatus()
-      var want = root.hasTrack && root.playing
+      var want = root.hasTrack && root.playing && root.vizOn
       if (root.hasTrack && !root.playing && (Date.now() - root.lastActiveMs) > 60000) root.idleHidden = true
       if (!want) {
         if (vizProc.running) vizProc.running = false

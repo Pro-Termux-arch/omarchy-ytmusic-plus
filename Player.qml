@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.2.5 beta"
+  readonly property string appVersion: "v2.2.6 beta"
 
   property bool opened: false
   property bool searching: false
@@ -123,6 +123,10 @@ Item {
   property real playbackDuration: 0
   property bool showRemaining: false // time labels: elapsed vs remaining
   property string seekStyle: "default"
+  property real wavePhase: 0
+  property bool vizOn: true
+  NumberAnimation on wavePhase { from: 0; to: 6.2832; duration: 2400; loops: Animation.Infinite; easing.type: Easing.Linear; running: waveCanvas.visible && root.playing }
+  onWavePhaseChanged: waveCanvas.requestPaint()
   property alias searchInput: searchField
   property var closeCallback: null
   property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
@@ -928,7 +932,8 @@ Item {
       setSearchLimit = (lim === 8 || lim === 20) ? lim : 12
       setDlQuality = s.dlQuality === "compact" ? "compact" : "best"
       var sst = String(s.seekstyle || "default")
-      seekStyle = (sst === "default" || sst === "wave" || sst === "lightning" || sst === "spiral" || sst === "dots") ? sst : "default"
+      seekStyle = (sst === "default" || sst === "wave" || sst === "lightning" || sst === "spiral" || sst === "dots" || sst === "mirror" || sst === "neon") ? sst : "default"
+      vizOn = (s.viz === "off") ? false : true
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
       var uch = String(s.update_channel || "beta")
@@ -2387,17 +2392,17 @@ Item {
                       var midY = h / 2
                       var amp = 4
                       var waveLen = 16
-                      var phase = Date.now() / 900
+                      var phase = root.wavePhase
                       var css = function(c, a) { return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + a + ")" }
                       var playedCss = css(root.accent, 1)
                       var restCss = css(root.muted, 0.4)
                       var st = root.seekStyle
-                      if (st !== "default" && st !== "wave" && st !== "lightning" && st !== "spiral" && st !== "dots") st = "default"
+                      if (st !== "default" && st !== "wave" && st !== "lightning" && st !== "spiral" && st !== "dots" && st !== "mirror" && st !== "neon") st = "default"
                       var ratio = Math.min(1, root.position / Math.max(1, root.playbackDuration))
                       var splitX = Math.max(0, Math.min(w, ratio * w))
                       var dotR = (seekHover.containsMouse || seekHover.pressed) ? 5 : 4
                       var live = !(root.playbackDuration > 0)
-                      var waveY = function(x) { return midY + amp * Math.sin((x / waveLen) * 2 * Math.PI + phase) }
+                      var waveY = function(x) { var a = (x / waveLen) * 2 * Math.PI; return midY + 4 * Math.sin(a + phase) + 1.5 * Math.sin(2.2 * a + 1.3 + phase) }
                       var triY = function(x) {
                         var p = ((x / waveLen) + phase / (2 * Math.PI)) % 1
                         if (p < 0) p += 1
@@ -2523,6 +2528,39 @@ Item {
                           ctx.arc(dx, midY, dr, 0, 2 * Math.PI)
                           ctx.fill()
                         }
+                        return
+                      }
+                      if (st === "mirror") {
+                        var MN = 56
+                        var mHash = function(i) { var x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x) }
+                        var mbw = w < 100 ? 1 : 2
+                        for (var mi = 0; mi < MN; mi++) {
+                          var h01 = mHash(mi)
+                          var bh = 2 + h01 * Math.max(2, (h - 4))
+                          var mx = (mi + 0.5) / MN * w
+                          var mPlayed = (!live) && (mx <= splitX)
+                          ctx.fillStyle = mPlayed ? playedCss : restCss
+                          ctx.fillRect(mx - mbw / 2, midY - bh / 2, mbw, bh)
+                        }
+                        return
+                      }
+                      if (st === "neon") {
+                        if (live) { strokeWave(0, w, restCss); return }
+                        var pulse = 8 + 4 * Math.sin(phase)
+                        ctx.save()
+                        ctx.shadowColor = playedCss
+                        ctx.shadowBlur = pulse
+                        strokeWave(0, splitX, playedCss)
+                        ctx.restore()
+                        strokeWave(splitX, w, restCss)
+                        ctx.save()
+                        ctx.shadowColor = playedCss
+                        ctx.shadowBlur = 12
+                        ctx.fillStyle = playedCss
+                        ctx.beginPath()
+                        ctx.arc(splitX, waveY(splitX), 4, 0, 2 * Math.PI)
+                        ctx.fill()
+                        ctx.restore()
                         return
                       }
                     }
@@ -3802,6 +3840,14 @@ Item {
                 }
               }
               SettingRow {
+                title: "Visualizer"
+                desc: "Spectrum bars in the bar"
+                control: SettingToggle {
+                  on: root.vizOn
+                  flipped: function() { root.vizOn = !root.vizOn; root.saveSetting("viz", root.vizOn ? "on" : "off") }
+                }
+              }
+              SettingRow {
                 title: "Normalize volume"
                 desc: "Even out loud / quiet masters · next track"
                 control: SettingToggle {
@@ -3850,7 +3896,7 @@ Item {
                   Row {
                     spacing: Style.space(4)
                     Repeater {
-                      model: ["default", "wave", "lightning", "spiral", "dots"]
+                      model: ["default", "wave", "lightning", "spiral", "dots", "mirror", "neon"]
                       delegate: Rectangle {
                         width: 70
                         height: 38
@@ -3881,7 +3927,7 @@ Item {
                               var restCss = css(root.muted, 0.4)
                               var splitX = 0.35 * w
                               var kind = modelData
-                              var waveY = function(x) { return midY + amp * Math.sin((x / waveLen) * 2 * Math.PI + phase) }
+                              var waveY = function(x) { var a = (x / waveLen) * 2 * Math.PI; return midY + 4 * Math.sin(a + phase) + 1.5 * Math.sin(2.2 * a + 1.3 + phase) }
                               var triY = function(x) {
                                 var p = ((x / waveLen) + phase / (2 * Math.PI)) % 1
                                 if (p < 0) p += 1
@@ -3959,6 +4005,51 @@ Item {
                                 ctx.beginPath()
                                 ctx.arc(splitX, midY, 3, 0, 2 * Math.PI)
                                 ctx.fill()
+                                return
+                              }
+                              if (kind === "mirror") {
+                                var MN = 56
+                                var mHash = function(i) { var x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x) }
+                                var mbw = 1
+                                for (var mi = 0; mi < MN; mi++) {
+                                  var h01 = mHash(mi)
+                                  var bh = 2 + h01 * Math.max(2, (h - 4))
+                                  var mx = (mi + 0.5) / MN * w
+                                  ctx.fillStyle = (mx <= splitX) ? playedCss : restCss
+                                  ctx.fillRect(mx - mbw / 2, midY - bh / 2, mbw, bh)
+                                }
+                                return
+                              }
+                              if (kind === "neon") {
+                                var segN = function(x0, x1, style) {
+                                  if (x1 <= x0) return
+                                  ctx.strokeStyle = style
+                                  ctx.lineWidth = 2
+                                  ctx.lineCap = "round"
+                                  ctx.lineJoin = "round"
+                                  ctx.beginPath()
+                                  var x = x0
+                                  ctx.moveTo(x, waveY(x))
+                                  x += 2
+                                  while (x < x1) { ctx.lineTo(x, waveY(x)); x += 2 }
+                                  ctx.lineTo(x1, waveY(x1))
+                                  ctx.stroke()
+                                }
+                                var pulse = 8 + 4 * Math.sin(phase)
+                                ctx.save()
+                                ctx.shadowColor = playedCss
+                                ctx.shadowBlur = pulse
+                                segN(0, splitX, playedCss)
+                                ctx.restore()
+                                segN(splitX, w, restCss)
+                                ctx.save()
+                                ctx.shadowColor = playedCss
+                                ctx.shadowBlur = 12
+                                ctx.fillStyle = playedCss
+                                ctx.beginPath()
+                                ctx.arc(splitX, waveY(splitX), 4, 0, 2 * Math.PI)
+                                ctx.fill()
+                                ctx.restore()
                                 return
                               }
                               var N = 24
