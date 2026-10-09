@@ -1391,22 +1391,40 @@ case "${1:-}" in
   charts)
     # Multi-region Apple RSS fusion (us+gb+au RRF), single batched lookup. Cached 6h.
     require curl; require jq
+    regions="us gb au"
+    charts_refresh=0
+    if (( $# == 1 )); then
+      :
+    elif (( $# == 2 )); then
+      if [[ "${2:-}" == refresh ]]; then
+        charts_refresh=1
+      elif [[ "${2:-}" =~ ^[a-z]{2}$ ]]; then
+        regions="${2:-}"
+      else
+        printf 'Usage: ytmusic-plus charts [REGION] [refresh]\n' >&2; exit 2
+      fi
+    elif (( $# == 3 )); then
+      if [[ "${2:-}" =~ ^[a-z]{2}$ ]] && [[ "${3:-}" == refresh ]]; then
+        regions="${2:-}"
+        charts_refresh=1
+      else
+        printf 'Usage: ytmusic-plus charts [REGION] [refresh]\n' >&2; exit 2
+      fi
+    else
+      printf 'Usage: ytmusic-plus charts [REGION] [refresh]\n' >&2; exit 2
+    fi
     prune_cache
     key="$CACHE_DIR/charts.json"
     legacy_key="$CACHE_DIR/home-charts"
     now="$(date +%s)"
-    if [[ -s "$key" ]]; then
-      age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
-      if (( age < 21600 )); then cat "$key"; exit 0; fi
-    elif [[ -s "$legacy_key" ]]; then
-      age=$(( now - $(stat -c %Y "$legacy_key" 2>/dev/null || printf 0) ))
-      if (( age < 21600 )); then cat "$legacy_key"; exit 0; fi
-    fi
-    region_arg="${2:-}"
-    if [[ "$region_arg" =~ ^[a-z]{2}$ ]]; then
-      regions="$region_arg"
-    else
-      regions="us gb au"
+    if (( charts_refresh == 0 )); then
+      if [[ -s "$key" ]]; then
+        age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
+        if (( age < 21600 )); then cat "$key"; exit 0; fi
+      elif [[ -s "$legacy_key" ]]; then
+        age=$(( now - $(stat -c %Y "$legacy_key" 2>/dev/null || printf 0) ))
+        if (( age < 21600 )); then cat "$legacy_key"; exit 0; fi
+      fi
     fi
     ids=""
     if [[ "$regions" == *" "* ]]; then
@@ -1662,12 +1680,16 @@ case "${1:-}" in
     ;;
   foryou)
     require curl; require jq
+    if (( $# > 2 )); then printf 'Usage: ytmusic-plus foryou [refresh]\n' >&2; exit 2; fi
+    if [[ -n "${2:-}" && "${2:-}" != refresh ]]; then printf 'Usage: ytmusic-plus foryou [refresh]\n' >&2; exit 2; fi
     prune_cache
     key="$CACHE_DIR/foryou.json"
     now="$(date +%s)"
-    if [[ -s "$key" ]]; then
-      age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
-      if (( age < 3600 )); then cat "$key"; exit 0; fi
+    if [[ "${2:-}" != refresh ]]; then
+      if [[ -s "$key" ]]; then
+        age=$(( now - $(stat -c %Y "$key" 2>/dev/null || printf 0) ))
+        if (( age < 3600 )); then cat "$key"; exit 0; fi
+      fi
     fi
     taste_file="$DATA_DIR/taste.json"
     lib_file="$LIB_FILE"
@@ -1810,6 +1832,16 @@ case "${1:-}" in
     afile="$DATA_DIR/artists.json"
     [[ -e "$afile" ]] || { printf '[]\n'; exit 0; }
     jq -c '[if type == "array" then .[] else empty end | select(type == "object") | {name: (.name // "" | tostring), art: (.art // "" | tostring), followedAt: (.followedAt // 0)}] | sort_by(.followedAt) | reverse' "$afile" 2>/dev/null || printf '[]\n'
+    ;;
+  artist-check)
+    require jq
+    name="${2:-}"
+    name="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"$name")"
+    (( ${#name} >= 1 && ${#name} <= 100 )) || { printf 'bad artist name\n' >&2; exit 2; }
+    if [[ "$name" =~ [[:cntrl:]] ]]; then printf 'bad artist name\n' >&2; exit 2; fi
+    afile="$DATA_DIR/artists.json"
+    [[ -e "$afile" ]] || exit 1
+    jq -e --arg n "$name" 'if type == "array" then ([.[]? | select(type == "object") | (.name // "" | tostring) | select(ascii_downcase == ($n | ascii_downcase))] | length > 0) else false end' "$afile" >/dev/null || exit 1
     ;;
   artist-songs)
     require curl; require jq
@@ -2140,7 +2172,7 @@ case "${1:-}" in
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-songs NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-songs NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
     exit 2
     ;;
 esac

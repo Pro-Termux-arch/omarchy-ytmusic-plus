@@ -1,13 +1,24 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **18** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable)
+Updates so far: **19** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1.8 stable (current)
+## v2.1.9 stable (current)
+
+> Refresh actually refreshes, copy sits center stage, and every song gets
+> a follow button where your thumb already is.
+
+- Feed refresh bypasses the charts/foryou cache (`[refresh]` arg survives
+  the refetch path) — new rows guaranteed, spin + notice included
+- Restart-box Copy button centered and mid-size as ordered
+- Now-playing header gains +/✓ artist-follow toggle beside ♥ (argv-safe
+  even for quoted names, state checked per track, roster auto-refreshes)
+
+## v2.1.8 stable
 
 > Home goes GOAT: Main feed with real taste profiling, fused multi-region
 > charts, and artist follows with profiles. Feed refresh button included.

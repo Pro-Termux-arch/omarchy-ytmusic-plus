@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.1.8 stable"
+  readonly property string appVersion: "v2.1.9 stable"
 
   property bool opened: false
   property bool searching: false
@@ -51,6 +51,7 @@ Item {
   property string homeRadioTag: "pop"
   property string homeTunesQuery: ""
   property bool homeLoading: false
+  property bool homeForceRefresh: false
   property bool homeMore: false
   property string currentUrl: "" // non-empty when the track on air is a stream
   property bool settingsDirty: false // a `set` is in flight; reload after drain
@@ -112,6 +113,7 @@ Item {
   property string currentDuration: ""
   property string currentVideoId: ""
   property bool currentSaved: false
+  property bool currentFollowed: false
   property bool currentDownloaded: false
   property bool mixPrefetching: false
   property bool currentIsLive: false
@@ -225,19 +227,22 @@ Item {
     if (homeModel.count === 0 && !homeProc.running) reloadHome()
   }
 
-  function reloadHome() {
+  function reloadHome(force) {
     // Rapid genre/mode hops: remember to refetch with the LATEST tag instead
     // of landing stale results for a previous one.
     if (homeMode === "artist") { root.reloadArtists(); return }
+    if (force === true) homeForceRefresh = true
     if (homeProc.running) { homeProc.refetch = true; return }
+    var useForce = (force === true) || homeForceRefresh
+    homeForceRefresh = false
     homeLoading = true
     errorMessage = ""
     homeProc.collected = ""
-    if (homeMode === "main") homeProc.command = ["bash", scriptPath, "foryou"]
-    else if (homeMode === "top") homeProc.command = ["bash", scriptPath, "charts"]
+    if (homeMode === "main") homeProc.command = useForce ? ["bash", scriptPath, "foryou", "refresh"] : ["bash", scriptPath, "foryou"]
+    else if (homeMode === "top") homeProc.command = useForce ? ["bash", scriptPath, "charts", "refresh"] : ["bash", scriptPath, "charts"]
     else if (homeMode === "radio") homeProc.command = ["bash", scriptPath, "radio", homeRadioTag]
     else if (homeMode === "tunes") homeProc.command = ["bash", scriptPath, "tunes", homeTunesQuery]
-    else homeProc.command = ["bash", scriptPath, "foryou"]
+    else homeProc.command = useForce ? ["bash", scriptPath, "foryou", "refresh"] : ["bash", scriptPath, "foryou"]
     homeProc.running = true
   }
 
@@ -498,6 +503,14 @@ Item {
       scriptPath + " lib-check " + currentVideoId + " >/dev/null 2>&1 && echo SAVED=1 || echo SAVED=0; " +
       scriptPath + " dl-check " + currentVideoId + " >/dev/null 2>&1 && echo DL=1 || echo DL=0"]
     flagProc.running = true
+    var followName = String(currentArtist || "").trim()
+    if (followName === "") { currentFollowed = false }
+    else if (followCheckProc.running) { followCheckProc.pendingArtist = followName }
+    else {
+      followCheckProc.pendingArtist = ""
+      followCheckProc.command = ["bash", scriptPath, "artist-check", followName]
+      followCheckProc.running = true
+    }
   }
 
   // ---- lyrics (lrclib, no login) ---------------------------------------------
@@ -1742,6 +1755,21 @@ Item {
   }
 
   Process {
+    id: followCheckProc
+    property string pendingArtist: ""
+    onExited: function(code) {
+      if (followCheckProc.pendingArtist !== "") {
+        var nxt = String(followCheckProc.pendingArtist)
+        followCheckProc.pendingArtist = ""
+        followCheckProc.command = ["bash", scriptPath, "artist-check", nxt]
+        followCheckProc.running = true
+        return
+      }
+      root.currentFollowed = (code === 0)
+    }
+  }
+
+  Process {
     id: statusProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -2046,7 +2074,7 @@ Item {
               Image { anchors.fill: parent; source: root.currentThumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true; opacity: status === Image.Ready ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } } }
             }
             Column {
-              width: parent.width - Style.space(46) - Style.space(96) - parent.spacing * 2
+              width: parent.width - Style.space(46) - Style.space(132) - parent.spacing * 3
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(1)
               Marquee {
@@ -2112,6 +2140,45 @@ Item {
                 onClicked: root.downloadCurrent()
               }
               InfoTip { watched: npDlHover; tipText: "Download offline (opus)" }
+            }
+            // follow toggle
+            Text {
+              text: root.currentFollowed ? "✓" : "+"
+              textFormat: Text.PlainText
+              color: root.currentFollowed ? root.accent : root.muted
+              font.family: root.uiFont
+              font.pixelSize: Style.font.iconLarge
+              anchors.verticalCenter: parent.verticalCenter
+              transformOrigin: Item.Center
+              scale: npFollowHover.pressed ? 0.85 : 1.0
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+              Behavior on color { ColorAnimation { duration: 120 } }
+              MouseArea {
+                id: npFollowHover
+                anchors.fill: parent
+                anchors.margins: -Style.space(6)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  var nm = String(root.currentArtist || "").trim()
+                  if (!nm) return
+                  if (root.currentFollowed) {
+                    root.runCmd(["artist-unfollow", nm])
+                    root.currentFollowed = false
+                    root.notice = "Unfollowed"
+                    root.noticeTimer.restart()
+                  } else {
+                    var art = String(root.currentThumbnail || "").trim()
+                    if (root.isSafeImageUrl(art) && /^https:/i.test(art)) root.runCmd(["artist-follow", nm, art])
+                    else root.runCmd(["artist-follow", nm])
+                    root.currentFollowed = true
+                    root.notice = "Followed"
+                    root.noticeTimer.restart()
+                  }
+                  if (root.homeMode === "artist") root.reloadArtists()
+                }
+              }
+              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist" }
             }
             }
           }
@@ -2315,7 +2382,7 @@ Item {
           height: visible ? Style.space(30) : 0
           visible: root.updateLocalVersion !== "" && !root.uiMatchesDisk()
           Row {
-            anchors.fill: parent
+            anchors.centerIn: parent
             spacing: Style.space(8)
             Text {
               text: "Shell restart finishes the update"
@@ -2341,6 +2408,7 @@ Item {
             }
             SettingBtn {
               label: "Copy"
+              height: Style.space(24)
               anchors.verticalCenter: parent.verticalCenter
               tapped: function() { copyProc.command = ["wl-copy", "omarchy restart shell"]; copyProc.running = true }
             }
@@ -2616,12 +2684,15 @@ Item {
                 tip: "Refresh feed"
                 tapped: function() {
                   root.homeModel.clear()
+                  root.notice = "Refreshing feed..."
+                  root.noticeTimer.restart()
                   if (root.homeMode === "artist") {
                     try { artistModel.clear() } catch (e2) {}
                     try { root.reloadArtists() } catch (e3) {}
                     return
                   }
-                  root.reloadHome()
+                  root.homeForceRefresh = true
+                  root.reloadHome(true)
                 }
                 NumberAnimation on rotation {
                   running: root.homeLoading
@@ -2834,9 +2905,9 @@ Item {
                   height: visible ? Style.space(52) : 0
                   visible: root.artistProfile !== ""
                   clip: true
-                  Row {
-                    anchors.fill: parent
-                    spacing: Style.space(8)
+          Row {
+            anchors.fill: parent
+            spacing: Style.space(8)
                     SettingBtn {
                       label: "Back"
                       anchors.verticalCenter: parent.verticalCenter
