@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.1.5 stable"
+  readonly property string appVersion: "v2.1.6 stable"
 
   property bool opened: false
   property bool searching: false
@@ -1017,10 +1017,8 @@ Item {
       recordUpdateCheck()
       if (!root.uiMatchesDisk()) {
         if (root.updateManualApply) {
-          root.notice = "Reloading shell to finish update..."
+          root.notice = "Updated - copy the restart command below"
           root.noticeTimer.restart()
-          shellRestartProc.command = ["omarchy", "restart", "shell"]
-          shellRestartProc.running = true
         } else {
           root.notice = "Updated - restart shell to reload v" + lv
         }
@@ -1404,7 +1402,16 @@ Item {
   }
 
   Process {
-    id: shellRestartProc
+    id: copyProc
+    onExited: function(code) {
+      if (code === 0) {
+        root.notice = "Copied - paste in a terminal"
+        root.noticeTimer.restart()
+      } else {
+        restartCmdInput.selectAll()
+        root.notice = "Copy failed - select the text + Ctrl+C"
+      }
+    }
   }
 
   // Font installer: stdout carries the detected family name.
@@ -2107,6 +2114,44 @@ Item {
                   onClicked: root.startMix(root.currentVideoId)
                 }
               }
+            }
+          }
+        }
+
+        // Post-update restart helper (stale UI only, zero height when fresh)
+        Item {
+          width: parent.width
+          height: visible ? Style.space(30) : 0
+          visible: root.updateLocalVersion !== "" && !root.uiMatchesDisk()
+          Row {
+            anchors.fill: parent
+            spacing: Style.space(8)
+            Text {
+              text: "Shell restart finishes the update"
+              textFormat: Text.PlainText
+              color: root.ink
+              font.family: root.uiFont
+              font.pixelSize: Style.font.caption
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            TextInput {
+              id: restartCmdInput
+              text: "omarchy restart shell"
+              readOnly: true
+              selectByMouse: true
+              activeFocusOnPress: true
+              width: Style.space(170)
+              color: root.muted
+              selectionColor: root.accent
+              selectedTextColor: root.onAccent
+              font.family: root.uiFont
+              font.pixelSize: Style.font.caption
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            SettingBtn {
+              label: "Copy"
+              anchors.verticalCenter: parent.verticalCenter
+              tapped: function() { copyProc.command = ["wl-copy", "omarchy restart shell"]; copyProc.running = true }
             }
           }
         }

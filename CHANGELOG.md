@@ -1,13 +1,25 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **15** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable)
+Updates so far: **16** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.1.5 stable (current)
+## v2.1.6 stable (current)
+
+> Post-update restart box: when the UI is stale after an update, a slim
+> banner shows `omarchy restart shell` in a selectable field with a Copy
+> button (wl-copy, manual-select fallback). Hidden in normal work.
+
+- Banner visible only when on-disk version differs from loaded UI,
+  zero height otherwise — no layout shift
+- Copy success → "Copied - paste in a terminal"; failure → text selected
+  for manual Ctrl+C
+- Manual updates no longer auto-restart; the box guides instead
+
+## v2.1.5 stable
 
 > Security sweep over the new updater paths (stash flow, restart command,
 > version compare): fixed literals only, tracked-only stash, numeric epoch,
