@@ -1,11 +1,30 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **8** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta)
+Updates so far: **9** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
+Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
+tracks these tags; tag the release commit right after pushing).
 
-## v1.9 beta (current)
+## v2 stable (current)
+
+> Promoted from v1.9 beta: cold-start off-by-one fix, footer updater with
+> 30-min auto-checks, stable/beta channels — plus Qt-proofing for the
+> Qt 6.11/6.12 theme breakage.
+
+- Qt-proof theme bridge in every QML file: tries `ShellColor`, falls back to
+  `Color`, falls back to hardcoded dark defaults — themed on old shells,
+  working on new ones, usable even if both singletons are missing
+- Updater lives in the footer now (version + check button + short status,
+  no overlap); Update button appears when an update is available
+- Dock tab pill renders on cold start (was 0-width until first hover)
+- Cold-start N→N+1 fixed: expired stream cache is busted and recovered
+  in place instead of skipping to the next song
+- Stable/beta channels: stable follows `vX.Y.Z-stable` tags, beta follows
+  the branch (opt-out via `update_last_check=off` or the toggle)
+
+## v1.9 beta
 
 - Cold-start off-by-one fixed: tapping the Nth song no longer plays N+1
 - Updater moves to the footer: version + check button + status right there;
