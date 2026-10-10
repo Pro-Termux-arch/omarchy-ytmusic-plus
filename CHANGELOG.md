@@ -1,13 +1,41 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **32** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable)
+Updates so far: **35** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.3.3 stable (current)
+## v2.3.6 stable (current)
+
+> 100ms bar hover-intent (layout follows dwell, paint stays instant),
+> fullscreen footer fix (987x700 + in-flow dock accounting), reverse
+> upcoming (queue-reverse verb + transport button), external-review batch:
+> download lock scoping, Marquee bar height, stream-URL saves, sleep label,
+> update-check stamp, live-last command order, volume-0, playlist listMode,
+> multi-tag LRC parse, seek clock races, argv flag checks, atomic caches,
+> hardened queue-insert, docs/hypr accuracy.
+
+## v2.3.5 stable
+
+> Weekly Mixtape (playlist-tab button → personalized 20-track queue via
+> `mixtape`), play-next + queue reorder (TrackRow `>|`/`^`/`v` actions +
+> `queue-insert`/`queue-move` verbs with STATE remap), Bar mode Settings
+> toggle (no backend change — `status` already ships `.barMode`), lyrics
+> cascade v2 (merged normalized pool, NetEase second source, UA etiquette,
+> honest plain fallback; 100ms ticker + cache key untouched).
+
+## v2.3.4 stable
+
+> Font-proof icons: idle + compact states are canvas-drawn (music note
+> + pause bars) — no font on earth can turn them into tofu boxes again.
+
+- PhonesIcon canvas (arch + pads, pause bars) replaces all font glyphs
+  in idle/compact states; transport glyphs proven-rendering, untouched
+- Glyph baseline Player 14 / BarWidget 4 (documented removals only)
+
+## v2.3.3 stable
 
 > Headphones, properly: the bar idle + compact icons are now the boxed
 > headphone glyph (verified codepoint), same theme sizing.

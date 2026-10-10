@@ -11,6 +11,7 @@ Item {
   property bool bold: false
   property bool hovered: false
   clip: true
+  implicitHeight: mqText.implicitHeight
 
   readonly property bool overflowing: mqText.implicitWidth > width
   onOverflowingChanged: if (!mq.overflowing) mqText.x = 0

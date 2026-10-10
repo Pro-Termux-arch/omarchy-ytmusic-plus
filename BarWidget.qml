@@ -44,8 +44,21 @@ BarWidget {
   property bool barExpand: true
   property bool fullScreen: false
   property bool vizOn: true
-  readonly property bool barHover: pillHover.containsMouse || bodyMouse.containsMouse || compactMouse.containsMouse || bodyMouse.pressed || compactMouse.pressed
-  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.barHover)
+  readonly property bool barHover: pillHover.containsMouse || bodyMouse.containsMouse || compactMouse.containsMouse || bodyMouse.pressed || compactMouse.pressed || prevMouse.pressed || playMouse.pressed || nextMouse.pressed || posterHover.pressed
+  property bool hoverIntent: false // hover intent (100ms dwell): layout follows this, instant paint follows barHover
+  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.hoverIntent)
+  Timer {
+    id: hoverIntentTimer
+    interval: 100
+    repeat: false
+    onTriggered: {
+      if (root.barHover) root.hoverIntent = true
+    }
+  }
+  onBarHoverChanged: {
+    if (root.barHover) hoverIntentTimer.restart()
+    else { hoverIntentTimer.stop(); root.hoverIntent = false }
+  }
 
   implicitWidth: root.pillFull ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : (typeof barSize !== "undefined" ? barSize : Style.space(30))
   implicitHeight: barSize
@@ -162,6 +175,64 @@ BarWidget {
       hoverEnabled: true
     }
 
+  // Font-proof music-note/pause icon (canvas - renders regardless of fonts).
+  component PhonesIcon: Canvas {
+    id: phCanvas
+    property string mode: "note"
+    property color ink: root.foreground
+    width: Style.space(18)
+    height: Style.space(18)
+    onWidthChanged: requestPaint()
+    onModeChanged: requestPaint()
+    onInkChanged: requestPaint()
+    Component.onCompleted: requestPaint()
+    onPaint: {
+      var ctx = getContext("2d")
+      var w = width
+      var h = height
+      if (w <= 0 || h <= 0) return
+      ctx.clearRect(0, 0, w, h)
+      var inkCss = "rgba(" + Math.round(ink.r * 255) + "," + Math.round(ink.g * 255) + "," + Math.round(ink.b * 255) + ",1)"
+      ctx.strokeStyle = inkCss
+      ctx.fillStyle = inkCss
+      ctx.lineWidth = 2
+      ctx.lineCap = "round"
+      if (mode === "pause") {
+        var bw = 2.5
+        var gap = 3
+        var bh = 10
+        ctx.fillRect(w / 2 - gap / 2 - bw, (h - bh) / 2, bw, bh)
+        ctx.fillRect(w / 2 + gap / 2, (h - bh) / 2, bw, bh)
+        return
+      }
+      // Eighth-note: big tilted head, thick stem, curved flag.
+      var hx = w * 0.36
+      var hy = h * 0.70
+      var hr = 4.1
+      ctx.save()
+      ctx.translate(hx, hy)
+      ctx.rotate(-0.32)
+      ctx.scale(1, 0.72)
+      ctx.beginPath()
+      ctx.arc(0, 0, hr, 0, 2 * Math.PI)
+      ctx.fill()
+      ctx.restore()
+      var sx = hx + hr * 0.92
+      var topY = h * 0.13
+      ctx.lineWidth = 2.4
+      ctx.beginPath()
+      ctx.moveTo(sx, hy - 1.5)
+      ctx.lineTo(sx, topY)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(sx - 1.2, topY)
+      ctx.bezierCurveTo(w * 0.78, h * 0.14, w * 0.86, h * 0.30, w * 0.74, h * 0.52)
+      ctx.quadraticCurveTo(w * 0.72, h * 0.36, w * 0.62, h * 0.33)
+      ctx.lineTo(sx - 1.2, h * 0.30)
+      ctx.closePath()
+      ctx.fill()
+    }
+  }
     // Body click: anywhere on the pill that isn't a button opens the player.
     // Declared above the hover detector so clicks still land here.
     MouseArea {
@@ -180,12 +251,9 @@ BarWidget {
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
       Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
 
-      Text {
+      PhonesIcon {
         anchors.centerIn: parent
-        text: "󰋌"
-        color: root.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
-        font.pixelSize: Style.font.iconLarge
+        ink: root.foreground
       }
     }
 
@@ -369,7 +437,7 @@ BarWidget {
   }
 
   // Compact bar: icon-square footprint (omarchy icon style, no pill).
-  // idle/no-track -> music-note; playing -> mini WaveBars; paused -> pause glyph.
+  // idle/no-track -> canvas note; playing -> mini WaveBars; paused -> canvas pause.
   Item {
     id: compactBox
     anchors.fill: parent
@@ -380,13 +448,10 @@ BarWidget {
       opacity: compactMouse.containsMouse ? 0.12 : 0
       Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
-    Text {
+    PhonesIcon {
       anchors.centerIn: parent
       visible: !root.hasTrack || root.idleHidden
-      text: String.fromCharCode(0xF02CC)
-      color: root.foreground
-      font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
-      font.pixelSize: Style.font.bodySmall
+      ink: root.foreground
     }
     WaveBars {
       anchors.centerIn: parent
@@ -396,13 +461,11 @@ BarWidget {
       barColor: root.themeAccent
       active: true
     }
-    Text {
+    PhonesIcon {
       anchors.centerIn: parent
       visible: root.hasTrack && !root.idleHidden && !root.playing
-      text: String.fromCharCode(0xF03E4)
-      color: root.foreground
-      font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
-      font.pixelSize: Style.font.bodySmall
+      mode: "pause"
+      ink: root.foreground
     }
     MouseArea {
       id: compactMouse
@@ -419,8 +482,8 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: playerPopup.fittedContentWidth(root.fullScreen ? Style.space(900) : Style.space(410))
-    contentHeight: playerPopup.cappedContentHeight(root.fullScreen ? Style.space(700) : Style.space(560))
+    contentWidth: playerPopup.fittedContentWidth(root.fullScreen ? Style.space(987) : Style.space(377))
+    contentHeight: playerPopup.cappedContentHeight(root.fullScreen ? Style.space(700) : Style.space(610)) // fullscreen 700: content needs it (footer clips at 610)
     padding: 0
     margin: Style.gapsOut
     focusTarget: popupPlayerLoader.item ? popupPlayerLoader.item.searchInput : null

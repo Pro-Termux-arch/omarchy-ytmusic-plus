@@ -25,7 +25,7 @@ bin/ytmusic-plus   backend (bash): player, queue, DSP, discovery, updater
 bin/ytviz          spectrum backend (python3, stdlib only)
 BarWidget.qml      bar pill: poster, marquee, VizBars, transport, compact mode,
                    hover art card, popup loader, status/viz procs, IPC
-Player.qml         popup player (~4700 lines): dock, transport, wave seekbar,
+Player.qml         popup player (~5900 lines): dock, transport, wave seekbar,
                    Home (Main/Top/Artist), lyrics, settings, updater UI
 Marquee.qml        scrolling title      WaveBars.qml  idle EQ bars
 InfoTip.qml        hover tooltip        VizBars.qml   spectrum bars
@@ -37,10 +37,11 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
 1. **QML edits via python3 ONLY** (read, exact-substring replace with
    `count==1` assert, write back). NEVER Edit/Write tools on `*.qml` —
    the pipeline strips nerd-font glyphs. `.json/.md/.sh/.txt` may use edits.
-   Glyph counts (PUA `0xE000–0xF8FF` + supp. `0xF0000–0xFFFFF`) MUST hold:
-   **Player 14, BarWidget 5, others 0**. (Player was 15 until the v2.2.7
-   mix-glyph deletion; BarWidget was 5 throughout — compact reuse goes
-   through `String.fromCharCode()` to keep the count literal.)
+    Glyph counts (PUA `0xE000–0xF8FF` + supp. `0xF0000–0xFFFFF`) MUST hold:
+    **Player 14, BarWidget 4, others 0**. (Player was 15 until the v2.2.7
+    mix-glyph deletion; BarWidget was 5 until the v2.3.4 canvas-icon swap —
+    compact reuse goes through `String.fromCharCode()` to keep the count
+    literal.)
    Count: `python3 -c` sum over ranges per file.
 2. **Live reinstall is atomic, same filesystem ONLY**:
    `cp -r project plugins/.newplug && chmod +x .newplug/bin/* && rm -rf
@@ -85,10 +86,53 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   BarWidget learns settings via `status` JSON fields (it has no settings
   proc): backend adds field at ALL status emissions, QML whitelists it.
   Current keys: `barmode full|compact`, `seekstyle
-  default|lightning|dots|mirror|neon|blocks|gradient|ripple|stellar`,
+  default|lightning|dots|mirror|neon|blocks|gradient|ripple|stellar|comet|heartbeat`,
   `btnstyle classic|glow|soft`, `viz on|off`, `buffer
-  saver|balanced|smooth`, `fullscreen on|off` (panel 900x700 via capped
-  helpers; dock drops to bottom in Player).
+  saver|balanced|smooth`, `fullscreen on|off` (panel 987x610, normal
+  377x610 — consecutive-Fibonacci frames via capped helpers; dock drops to
+  bottom in Player).
+- Golden-ratio frame (strict): free chrome constants use Fibonacci steps
+  3/5/8/13/21/34/55/89/144/233; transport ladder 21:34:55; panel 377x610
+  (610/377 = phi), fullscreen 987 wide (987/377 = phi^2). Derived sums
+  (column-width formulas, icon reserves) and theme font tokens stay.
+  Seek art: existing 9 styles pixel-frozen; new styles are born phi
+  (comet tail 55, heartbeat unit 34, previews 76x34 in 89x55 cards).
+- Home feed v3 (`foryou`): taste score = (plays + 3*loves)/(1+age_months)
+  + recency bonus; strict artist match on taste rows (same predicate as
+  follow rows); title normalization (`nt`: feat/live/remaster/video junk
+  stripped) on exclusions, dedup keys and have-keys; live queue.json +
+  state.json titles folded into exclusions; per-artist round-robin
+  (2 each, then remainder), cap 20; cache 30min. Cold users get charts.
+- v2.3.5 contracts: `mixtape [refresh]` → JSON array of queue items
+  (videoId/title/artist/thumbnail/duration/isLive/url) resolved via the
+  shared search cache (needs >=1 hit); QML `buildMixtape/fillMixtape` →
+  `playAt(0)` with `listTitle` "Weekly Mixtape". `queue-insert JSON POS`
+  (object + 11-char videoId validated, clamps, bumps STATE.index) +
+  `queue-move FROM TO` (clamps, remaps STATE.index); TrackRow `>|` (play
+  next, always) + `^`/`v` (queue mode only, ASCII-only icons + InfoTips);
+  icon reserve derived: 110, 144 in queue mode. Bar mode UI:
+  `barModeSetting` mirror + Appearance `SettingCycle` (no backend change —
+  `status` already ships `.barMode`). Lyrics cascade v2: get-exact (raw,
+  bare) → merged raw+bare search pool (dedup by id, synced-first,
+  duration-scored) → NetEase direct → honest plain;   `has_ts` gate before
+  any synced claim; cache key (artist/title/duration) + 100ms ticker
+  untouched (still sacred).
+- v2.3.6 contracts: hover intent — bar pill LAYOUT follows `hoverIntent`
+  (100ms dwell via `hoverIntentTimer` + `onBarHoverChanged`; instant paint
+  still follows `barHover`; transport/poster pressed states pin `barHover`
+  so press-hold never collapses the pill). Footer: fullscreen popup
+  987x700 (content needs it — 610 clips the footer), `bottomMargin` 0
+  (dockBottomSlot is in-flow; a margin double-counts under card clip:true).
+  `queue-reverse` verb (mirror of shuffle's own reverse path) + transport
+  "Reverse" text button (caption, uiFont, zero font risk). `runCmd` takes
+  optional `after` hook: playNext/moveTrack/reverseQueue pass
+  "reload-queue"; mixtape is single-flight; fillMixtape validates +
+  sanitizes before clearing and sets title after setTab. Sleep chips
+  highlight remaining-derived minutes (`sleepMinutesLeft`, restart-proof).
+  dl-get serializes on private `dl.lock` (global lock freed — status stays
+  instant mid-download). All cache writes via `atomic_cache_put`
+  (tmp+commit); merge tmps carry PID; queue-insert validates videoId + url
+  scheme; jq filters use --argjson (no string interpolation).
 
 ## 4. HOWTO: add a seekbar style (key `mystyle`)
 
@@ -114,7 +158,7 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   on phase change; previews static (paint once).
 - Bar modes (`full|compact`), visualizer (`viz on|off`), buffer profiles
   (`saver|balanced|smooth` → mpv demuxer knobs), `fullscreen` (panel size
-  via BarWidget + dock-bottom layout in Player): all follow §3 settings
+  987x610 / 377x610 via BarWidget + dock-bottom layout in Player): all follow §3 settings
   pattern end to end.
 - Updater contract: `update-check|update-apply [stable|beta]`;
   `UPDATE_CHECK local_version=.. local_sha=.. remote_sha=..
@@ -134,7 +178,7 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
 bash -n bin/ytmusic-plus && python3 -m py_compile bin/ytviz
 qmllint <edited>.qml            # 0 Error lines
 omarchy plugin validate .
-python3 glyph-count              # Player 14, BarWidget 5, rest 0
+python3 glyph-count              # Player 14, BarWidget 4, rest 0
 grep root\.<id> audit → none
 journalctl --user --since "5 minutes ago" | grep ytmusic | grep -v reloading  # empty
 ```

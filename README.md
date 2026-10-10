@@ -4,9 +4,9 @@ Privacy-first, login-free YouTube music player for the Omarchy bar.
 
 - **Search** YouTube (songs, artists, albums) — no Google account, no cookies
 - **Mix**: endless station from any track (YouTube Music-style "start radio")
-- **Playlists**: import public YouTube playlists (URL or id) + local playlists
+- **Playlist**: import public YouTube playlists (URL or id) + local playlists
   (create, add, open, play) stored as JSON under `~/.local/share`
-- **Saved tracks** (♥ library) with one-key save/unsave
+- **Favourite** (♥ library) with one-key save/unsave
 - **Downloads**: offline Opus cache in `~/Music/ytmusic-plus/`; downloaded
   tracks play locally with zero network, and the resolver prefers them
 - **Lyrics**: version-matched synced lyrics via lrclib (no key, no login) —
@@ -34,7 +34,8 @@ not version strings — so a phantom `v1.7.1` can never confuse it again: the
 status line shows the manifest version plus the short local SHA, and whether
 the upstream SHA differs.
 
-- **Check** runs `ytmusic-plus update-check` (read-only, 20 s timeouts). With
+- **Check** runs `ytmusic-plus update-check` (read-only on stable — beta
+  refreshes its version guard via `git fetch`; 20 s timeouts). With
   no `.git` checkout it says so and points at `omarchy plugin update`.
 - **Update now** (shown only when an update is available) runs
   `ytmusic-plus update-apply`: `omarchy plugin update local.ytmusic-plus`,

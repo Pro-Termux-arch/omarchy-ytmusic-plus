@@ -1,6 +1,9 @@
 -- Load from ~/.config/hypr/bindings.lua with:
 -- pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/local.ytmusic-plus/hypr-bindings.lua")
 
+-- NOTE: legacy floating-window rule — the player is a layer-shell
+-- KeyboardPanel popup (no standalone window) and mpv runs --no-video,
+-- so this block never matches. Kept for reference; o.bind below is live.
 o.window(
   { class = "^org.quickshell$", title = "^YTMusic Plus$" },
   {
