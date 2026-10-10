@@ -41,6 +41,7 @@ BarWidget {
   property double lastActiveMs: 0
   property bool idleHidden: false
   property string barMode: "full"
+  property bool fullScreen: false
   property bool vizOn: true
 
   implicitWidth: root.barMode === "compact" ? (typeof barSize !== "undefined" ? barSize : Style.space(30)) : ((root.hasTrack && !root.idleHidden) ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : Style.space(30))
@@ -98,6 +99,7 @@ BarWidget {
     try {
       var status = JSON.parse(String(raw || "{}"))
       root.barMode = (status.barMode === "compact") ? "compact" : "full"
+      root.fullScreen = (status.fullscreen === "on")
       root.vizOn = (status.viz === "off") ? false : true
       root.playerRunning = status.running === true
       root.playing = root.playerRunning && status.paused !== true
@@ -132,6 +134,7 @@ BarWidget {
     radius: Style.space(6)
     color: root.hasTrack ? root.themeBarBackground : "transparent"
     border.width: root.hasTrack ? 1 : 0
+    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     border.color: pillHover.containsMouse ? root.themeAccent : root.themePopupsBorder
     scale: bodyMouse.pressed ? 0.97 : 1.0
     transformOrigin: Item.Center
@@ -329,6 +332,11 @@ BarWidget {
       x: 0
       y: -height - Style.space(6)
       visible: posterHover.containsMouse && root.thumbnail !== "" && root.barMode !== "compact"
+      opacity: posterHover.containsMouse ? 1 : 0
+      scale: posterHover.containsMouse ? 1 : 0.9
+      transformOrigin: Item.BottomLeft
+      Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+      Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
       Rectangle {
         x: 2
         y: 3
@@ -407,8 +415,8 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: playerPopup.fittedContentWidth(Style.space(410))
-    contentHeight: playerPopup.cappedContentHeight(Style.space(560))
+    contentWidth: playerPopup.fittedContentWidth(root.fullScreen ? Style.space(680) : Style.space(410))
+    contentHeight: playerPopup.cappedContentHeight(root.fullScreen ? Style.space(760) : Style.space(560))
     padding: 0
     margin: Style.gapsOut
     focusTarget: popupPlayerLoader.item ? popupPlayerLoader.item.searchInput : null
@@ -418,6 +426,11 @@ BarWidget {
       anchors.fill: parent
       active: true
       source: Qt.resolvedUrl("Player.qml")
+      opacity: root.popupOpen ? 1 : 0
+      scale: root.popupOpen ? 1 : 0.96
+      transformOrigin: Item.Center
+      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+      Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
       onLoaded: {
         item.closeCallback = function() { root.close("closeCallback") }
       }

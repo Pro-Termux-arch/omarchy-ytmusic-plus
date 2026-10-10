@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.2.7 beta"
+  readonly property string appVersion: "v2.3 beta"
 
   property bool opened: false
   property bool searching: false
@@ -52,7 +52,6 @@ Item {
   property string homeTunesQuery: ""
   property bool homeLoading: false
   property bool homeForceRefresh: false
-  property bool homeMore: false
   property string currentUrl: "" // non-empty when the track on air is a stream
   property bool settingsDirty: false // a `set` is in flight; reload after drain
   // Playback modes from backend status
@@ -125,7 +124,9 @@ Item {
   property string seekStyle: "default"
   property real wavePhase: 0
   property bool vizOn: true
-  property bool helpMode: false
+  property bool fullScreen: false
+  property string bufferMode: "balanced"
+  property string stagedFontPath: ""
   NumberAnimation on wavePhase { from: 0; to: 6.2832; duration: 2400; loops: Animation.Infinite; easing.type: Easing.Linear; running: waveCanvas.visible && root.playing }
   onWavePhaseChanged: waveCanvas.requestPaint()
   property alias searchInput: searchField
@@ -932,8 +933,10 @@ Item {
       var lim = Number(s.searchLimit) || 12
       setSearchLimit = (lim === 8 || lim === 20) ? lim : 12
       setDlQuality = s.dlQuality === "compact" ? "compact" : "best"
+      var bf = String(s.buffer || "balanced")
+      bufferMode = (bf === "saver" || bf === "balanced" || bf === "smooth") ? bf : "balanced"
       var sst = String(s.seekstyle || "default")
-      seekStyle = (sst === "default" || sst === "wave" || sst === "lightning" || sst === "spiral" || sst === "dots" || sst === "mirror" || sst === "neon") ? sst : "default"
+      seekStyle = (sst === "default" || sst === "wave" || sst === "lightning" || sst === "spiral" || sst === "dots" || sst === "mirror" || sst === "neon" || sst === "blocks" || sst === "gradient") ? sst : "default"
       vizOn = (s.viz === "off") ? false : true
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
@@ -1136,8 +1139,10 @@ Item {
       recordUpdateCheck()
       if (!root.uiMatchesDisk()) {
         if (root.updateManualApply) {
-          root.notice = "Updated - copy the restart command below"
+          root.notice = "Reloading shell to finish update..."
           noticeTimer.restart()
+          shellRestartProc.command = ["omarchy", "restart", "shell"]
+          shellRestartProc.running = true
         } else {
           root.notice = "Updated - restart shell to reload v" + lv
         }
@@ -1278,6 +1283,7 @@ Item {
       else loopMode = "off"
       silenceOn = status.silence === true
       normalizeOn = status.normalize === true
+      fullScreen = status.fullscreen === "on"
       sleepUntil = Number(status.sleepUntil) || 0
       sleepMode = String(status.sleepMode || "")
       if (tabIndex === 6) updateLyricIndex()
@@ -1550,6 +1556,11 @@ Item {
     }
   }
 
+  // Manual-update shell restart (own region near copyProc)
+  Process {
+    id: shellRestartProc
+  }
+
   // Font installer: stdout carries the detected family name.
   Process {
     id: fontProc
@@ -1577,7 +1588,7 @@ Item {
     title: "Choose a font file"
     fileMode: FileDialog.OpenFile
     nameFilters: ["Font files (*.ttf *.otf *.woff *.woff2 *.ttc)", "All files (*)"]
-    onAccepted: root.installFont(selectedFile)
+    onAccepted: root.stagedFontPath = String(selectedFile || "")
   }
 
   Process {
@@ -1988,7 +1999,9 @@ Item {
     clip: true
     transformOrigin: Item.Center
     scale: root.opened ? 1 : 0.985
-    Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    opacity: root.opened ? 1 : 0
+    Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
+    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     Image {
       anchors.fill: parent
@@ -1999,17 +2012,50 @@ Item {
     }
 
     Item {
+      id: contentWrap
       anchors.fill: parent
       anchors.margins: Style.space(14)
 
       Column {
+        id: mainCol
         anchors.fill: parent
-        spacing: Style.space(7)
+        anchors.bottomMargin: root.fullScreen ? Style.space(36) : 0
+        spacing: root.fullScreen ? Style.space(10) : Style.space(7)
 
         // Title row
         Item {
           width: parent.width
-          height: Style.space(22)
+          height: Style.space(26)
+          Rectangle {
+            id: logoBtn
+            width: 26
+            height: 26
+            radius: 13
+            color: root.accent
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            rotation: 0
+            transformOrigin: Item.Center
+            scale: logoHover.pressed ? 0.9 : 1.0
+            Behavior on rotation { NumberAnimation { duration: 600; easing.type: Easing.OutBack } }
+            Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            Text {
+              anchors.centerIn: parent
+              text: "♪"
+              color: root.onAccent
+              font.pixelSize: 14
+              font.bold: true
+            }
+            MouseArea {
+              id: logoHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: logoBtn.rotation += 360
+            }
+            InfoTip { watched: logoHover; tipText: "YTMusic Plus"; delayMs: 3000 }
+          }
           Text {
             text: "YTMusic Plus"
             color: root.ink
@@ -2017,6 +2063,7 @@ Item {
             font.pixelSize: Style.font.bodySmall
             font.bold: true
             anchors.left: parent.left
+            anchors.leftMargin: 34
             anchors.verticalCenter: parent.verticalCenter
           }
           Text {
@@ -2031,10 +2078,20 @@ Item {
 
         // Floating dock — variable-width cells, sliding highlight follows the
         // mouse and rests on the active tab. Omarchy tokens only, no glass.
+        // Fullscreen: dock relocates to bottom slot above footer.
+        Item {
+          id: dockTopSlot
+          width: parent.width
+          height: root.fullScreen ? 0 : Style.space(36)
+          visible: !root.fullScreen
+        }
         Item {
           id: dockRow
+          parent: root.fullScreen ? dockBottomSlot : dockTopSlot
           width: parent.width
           height: Style.space(36)
+          anchors.top: root.fullScreen ? parent.top : undefined
+          anchors.bottom: root.fullScreen ? parent.bottom : undefined
           readonly property int litTab: root.hoveredTab >= 0 ? root.hoveredTab : root.tabIndex
 
           Item {
@@ -2072,7 +2129,7 @@ Item {
               Repeater {
                 id: dockCellsRepeater
                 model: [
-                  { label: "Home", tip: "Discover: charts, radio, tunes" },
+                  { label: "Home", tip: "Discover: charts, radio" },
                   { label: "Find", tip: "Search YouTube — no login" },
                   { label: "Queue", tip: "Up next" },
                   { label: "Playlist", tip: "Imports + your lists" },
@@ -2092,7 +2149,7 @@ Item {
                     font.family: modelData.icon ? root.iconFont : root.uiFont
                     font.pixelSize: Math.max(8, Style.font.caption - 1)
                     font.bold: root.tabIndex === index
-                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   }
                   MouseArea {
                     id: dockHover
@@ -2106,35 +2163,7 @@ Item {
                     onExited: if (root.hoveredTab === index) root.hoveredTab = -1
                     onClicked: root.setTab(index)
                   }
-                  InfoTip { watched: dockHover; tipText: modelData.tip; delayMs: root.helpMode ? 3000 : 5000 }
-                }
-              }
-            }
-          }
-          // Help mode toggle: ASCII "?" via uiFont, beside settings gear.
-          Item {
-            id: helpBtn
-            width: Style.space(24)
-            height: Style.space(24)
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            Text {
-              anchors.centerIn: parent
-              text: "?"
-              color: root.helpMode ? root.accent : root.muted
-              font.family: root.uiFont
-              font.pixelSize: Style.font.bodySmall
-              font.bold: true
-            }
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: {
-                root.helpMode = !root.helpMode
-                if (root.helpMode) {
-                  root.notice = "Help on \u2014 hover any button 3s"
-                  noticeTimer.restart()
+                  InfoTip { watched: dockHover; tipText: modelData.tip; delayMs: 3000 }
                 }
               }
             }
@@ -2231,7 +2260,7 @@ Item {
               transformOrigin: Item.Center
               scale: importHover.pressed ? 0.95 : 1.0
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-              Behavior on opacity { NumberAnimation { duration: 120 } }
+              Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
               Text { anchors.centerIn: parent; text: "Import"; color: root.onAccent; font.family: root.uiFont; font.pixelSize: Style.font.caption; font.bold: true }
               MouseArea { id: importHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.importPlaylist() }
             }
@@ -2241,13 +2270,13 @@ Item {
         // Now playing
         Item {
           width: parent.width
-          height: root.currentTitle !== "" ? Style.space(56) : 0
+          height: root.currentTitle !== "" ? (root.fullScreen ? Style.space(110) : Style.space(56)) : 0
           visible: root.currentTitle !== ""
           Row {
             anchors.fill: parent
-            spacing: Style.space(8)
+            spacing: root.fullScreen ? Style.space(12) : Style.space(8)
             Rectangle {
-              width: Style.space(46)
+              width: root.fullScreen ? Style.space(110) : Style.space(46)
               height: width
               radius: Style.space(7)
               color: root.raised
@@ -2256,7 +2285,7 @@ Item {
               Image { anchors.fill: parent; source: root.currentThumbnail; fillMode: Image.PreserveAspectCrop; asynchronous: true; opacity: status === Image.Ready ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } } }
             }
             Column {
-              width: parent.width - Style.space(46) - Style.space(132) - parent.spacing * 3
+              width: parent.width - (root.fullScreen ? Style.space(110) : Style.space(46)) - Style.space(132) - parent.spacing * 3
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(1)
               Marquee {
@@ -2276,6 +2305,7 @@ Item {
                 font.family: root.uiFont
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideRight
+                Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               }
             }
             // save toggle
@@ -2288,7 +2318,7 @@ Item {
               transformOrigin: Item.Center
               scale: npSaveHover.pressed ? 0.85 : 1.0
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-              Behavior on color { ColorAnimation { duration: 120 } }
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               MouseArea {
                 id: npSaveHover
                 anchors.fill: parent
@@ -2300,7 +2330,7 @@ Item {
                   else root.saveCurrent()
                 }
               }
-              InfoTip { watched: npSaveHover; tipText: root.currentSaved ? "Remove from Favourite" : "Save to Favourite"; delayMs: root.helpMode ? 3000 : 5000 }
+              InfoTip { watched: npSaveHover; tipText: root.currentSaved ? "Remove from Favourite" : "Save to Favourite"; delayMs: 3000 }
             }
             // download
             Text {
@@ -2312,7 +2342,7 @@ Item {
               transformOrigin: Item.Center
               scale: npDlHover.pressed ? 0.85 : 1.0
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-              Behavior on color { ColorAnimation { duration: 120 } }
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               MouseArea {
                 id: npDlHover
                 anchors.fill: parent
@@ -2321,7 +2351,7 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.downloadCurrent()
               }
-              InfoTip { watched: npDlHover; tipText: "Download offline (opus)"; delayMs: root.helpMode ? 3000 : 5000 }
+              InfoTip { watched: npDlHover; tipText: "Download offline (opus)"; delayMs: 3000 }
             }
             // follow toggle
             Rectangle {
@@ -2335,7 +2365,8 @@ Item {
               transformOrigin: Item.Center
               scale: npFollowHover.pressed ? 0.9 : 1.0
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-              Behavior on color { ColorAnimation { duration: 120 } }
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+              Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               Text {
                 id: npFollowLabel
                 anchors.centerIn: parent
@@ -2345,6 +2376,7 @@ Item {
                 font.family: root.uiFont
                 font.pixelSize: Style.font.caption
                 font.bold: true
+                Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               }
               MouseArea {
                 id: npFollowHover
@@ -2371,7 +2403,7 @@ Item {
                   if (root.homeMode === "artist") root.reloadArtists()
                 }
               }
-              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist"; delayMs: root.helpMode ? 3000 : 5000 }
+              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist"; delayMs: 3000 }
             }
             }
           }
@@ -2426,7 +2458,7 @@ Item {
                       var playedCss = css(root.accent, 1)
                       var restCss = css(root.muted, 0.4)
                       var st = root.seekStyle
-                      if (st !== "default" && st !== "wave" && st !== "lightning" && st !== "spiral" && st !== "dots" && st !== "mirror" && st !== "neon") st = "default"
+                      if (st !== "default" && st !== "wave" && st !== "lightning" && st !== "spiral" && st !== "dots" && st !== "mirror" && st !== "neon" && st !== "blocks" && st !== "gradient") st = "default"
                       var ratio = Math.min(1, root.position / Math.max(1, root.playbackDuration))
                       var splitX = Math.max(0, Math.min(w, ratio * w))
                       var dotR = (seekHover.containsMouse || seekHover.pressed) ? 5 : 4
@@ -2592,6 +2624,53 @@ Item {
                         ctx.restore()
                         return
                       }
+                      if (st === "blocks") {
+                        var BN = 22;
+                        var bStep = w / BN;
+                        var bW = Math.max(2, bStep - 3);
+                        for (var bi = 0; bi < BN; bi++) {
+                          var bx = (bi + 0.5) / BN * w;
+                          var bPlayed = (!live) && (bx <= splitX);
+                          var bH = (bi % 2 === 0) ? 10 : 5;
+                          if (bH > h) bH = h;
+                          ctx.fillStyle = bPlayed ? playedCss : restCss;
+                          ctx.fillRect(bx - bW / 2, midY - bH / 2, bW, bH);
+                        }
+                        return
+                      }
+                      if (st === "gradient") {
+                        ctx.lineCap = "round";
+                        ctx.strokeStyle = restCss;
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(0, midY);
+                        ctx.lineTo(w, midY);
+                        ctx.stroke();
+                        if (live) return;
+                        if (splitX > 0) {
+                          var ar = Math.round(root.accent.r * 255);
+                          var ag = Math.round(root.accent.g * 255);
+                          var ab = Math.round(root.accent.b * 255);
+                          var lr = Math.round(ar + (255 - ar) * 0.35);
+                          var lg = Math.round(ag + (255 - ag) * 0.35);
+                          var lb = Math.round(ab + (255 - ab) * 0.35);
+                          var lightCss = "rgba(" + lr + "," + lg + "," + lb + ",1)";
+                          var grd = ctx.createLinearGradient(0, 0, splitX, 0);
+                          grd.addColorStop(0, playedCss);
+                          grd.addColorStop(1, lightCss);
+                          ctx.strokeStyle = grd;
+                          ctx.lineWidth = 4;
+                          ctx.beginPath();
+                          ctx.moveTo(0, midY);
+                          ctx.lineTo(splitX, midY);
+                          ctx.stroke();
+                        }
+                        ctx.fillStyle = playedCss;
+                        ctx.beginPath();
+                        ctx.arc(splitX, midY, dotR, 0, 2 * Math.PI);
+                        ctx.fill();
+                        return
+                      }
                     }
                   }
                   Timer {
@@ -2644,9 +2723,9 @@ Item {
               height: Style.space(40)
               Row {
                 anchors.centerIn: parent
-                spacing: Style.space(12)
+                spacing: root.fullScreen ? Style.space(18) : Style.space(12)
                 TransportBtn {
-                  glyph: "󰒨"
+                  glyph: "󰒝"
                   btnSize: Style.space(32)
                   small: true
                   tip: "Shuffle upcoming"
@@ -2692,9 +2771,9 @@ Item {
                   font.pixelSize: Style.font.bodySmall
                   font.bold: true
                   anchors.verticalCenter: parent.verticalCenter
-                  Behavior on color { ColorAnimation { duration: 120 } }
+                  Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   MouseArea { id: volDown; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(-5) }
-                  InfoTip { watched: volDown; tipText: "Quieter"; delayMs: root.helpMode ? 3000 : 5000 }
+                  InfoTip { watched: volDown; tipText: "Quieter"; delayMs: 3000 }
                 }
                 Text {
                   width: Style.space(30)
@@ -2713,9 +2792,9 @@ Item {
                   font.pixelSize: Style.font.bodySmall
                   font.bold: true
                   anchors.verticalCenter: parent.verticalCenter
-                  Behavior on color { ColorAnimation { duration: 120 } }
+                  Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   MouseArea { id: volUp; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(5) }
-                  InfoTip { watched: volUp; tipText: "Louder"; delayMs: root.helpMode ? 3000 : 5000 }
+                  InfoTip { watched: volUp; tipText: "Louder"; delayMs: 3000 }
                 }
               }
             }
@@ -2807,6 +2886,7 @@ Item {
             text: root.notice || root.errorMessage
             textFormat: Text.PlainText
             color: root.notice ? root.accent : "#ff7a7a"
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
             font.family: root.uiFont
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
@@ -2816,7 +2896,7 @@ Item {
             opacity: visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: statusHover; anchors.fill: parent; hoverEnabled: true }
-            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: root.helpMode ? 3000 : 400 }
+            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: 3000 }
           }
         }
 
@@ -2866,9 +2946,9 @@ Item {
               border.color: root.accent
               transformOrigin: Item.Center
               scale: createHover.pressed ? 0.95 : 1.0
-              Behavior on color { ColorAnimation { duration: 120 } }
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-              Text { anchors.centerIn: parent; text: "+ Create"; color: createHover.containsMouse ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption; Behavior on color { ColorAnimation { duration: 120 } } }
+              Text { anchors.centerIn: parent; text: "+ Create"; color: createHover.containsMouse ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption; Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } } }
               MouseArea { id: createHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.createPlaylist() }
             }
             Rectangle {
@@ -2879,6 +2959,8 @@ Item {
               border.width: 1
               border.color: root.accent
               opacity: root.openPlaylistName ? 1 : 0.4
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+              Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
               enabled: root.openPlaylistName !== ""
               Text { anchors.centerIn: parent; text: "▶ Play"; color: root.openPlaylistName ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption }
               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.playPlaylist(root.openPlaylistName) }
@@ -2904,6 +2986,8 @@ Item {
               color: root.openPlaylistName === name ? root.accent : "transparent"
               border.width: 1
               border.color: root.openPlaylistName === name ? root.accent : root.muted
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+              Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               Text {
                 id: chipText
                 anchors.centerIn: parent
@@ -2912,6 +2996,7 @@ Item {
                 color: root.openPlaylistName === name ? root.onAccent : root.ink
                 font.family: root.uiFont
                 font.pixelSize: Style.font.caption
+                Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
               }
               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openPlaylist(name) }
             }
@@ -2947,6 +3032,8 @@ Item {
                 color: root.addTargetPlaylist === name ? root.accent : "transparent"
                 border.width: 1
                 border.color: root.muted
+                Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                 Text {
                   id: addChip
                   anchors.centerIn: parent
@@ -2954,6 +3041,7 @@ Item {
                   textFormat: Text.PlainText
                   color: root.addTargetPlaylist === name ? root.onAccent : root.ink
                   font.family: root.uiFont
+                  Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   font.pixelSize: Style.font.caption
                 }
                 MouseArea {
@@ -2993,7 +3081,7 @@ Item {
                 height: Style.space(24)
                 radius: height / 2
                 color: root.raised
-                readonly property int litIdx: root.homeMode === "main" ? 0 : root.homeMode === "top" ? 1 : root.homeMode === "artist" ? 2 : 3
+                readonly property int litIdx: root.homeMode === "main" ? 0 : root.homeMode === "top" ? 1 : root.homeMode === "artist" ? 2 : 0
                 Rectangle {
                   id: homeDockHi
                   x: Style.space(5) + ((homeSegRepeater.count > homeDock.litIdx && homeSegRepeater.itemAt(homeDock.litIdx)) ? homeSegRepeater.itemAt(homeDock.litIdx).x : 0)
@@ -3015,11 +3103,10 @@ Item {
                     model: [
                       { key: "main", label: "Main" },
                       { key: "top", label: "Top charts" },
-                      { key: "artist", label: "Artist" },
-                      { key: "more", label: "More" }
+                      { key: "artist", label: "Artist" }
                     ]
                     Item {
-                      readonly property bool segActive: index < 3 ? root.homeMode === modelData.key : (root.homeMore || homeDock.litIdx === 3)
+                      readonly property bool segActive: root.homeMode === modelData.key
                       width: segLabel.width + Style.space(14)
                       height: homeDockRow.height
                       Text {
@@ -3028,6 +3115,7 @@ Item {
                         text: modelData.label
                         textFormat: Text.PlainText
                         color: segActive ? root.onAccent : root.muted
+                        Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                         font.family: root.uiFont
                         font.pixelSize: Style.font.caption
                         font.bold: segActive
@@ -3036,8 +3124,7 @@ Item {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                          if (index < 3) root.setHomeMode(modelData.key)
-                          else root.homeMore = !root.homeMore
+                          root.setHomeMode(modelData.key)
                         }
                       }
                     }
@@ -3077,76 +3164,10 @@ Item {
               }
             }
 
-            Row {
-              width: parent.width
-              height: visible ? Style.space(24) : 0
-              visible: root.homeMore
-              spacing: Style.space(5)
-              Rectangle {
-                width: tunesMiniLabel.width + Style.space(14)
-                height: Style.space(22)
-                radius: height / 2
-                color: root.homeMode === "tunes" ? root.accent : "transparent"
-                border.width: 1
-                border.color: root.homeMode === "tunes" ? root.accent : root.muted
-                Text {
-                  id: tunesMiniLabel
-                  anchors.centerIn: parent
-                  text: "Find tunes"
-                  color: root.homeMode === "tunes" ? root.onAccent : root.muted
-                  font.family: root.uiFont
-                  font.pixelSize: Style.font.caption
-                  font.bold: root.homeMode === "tunes"
-                }
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.setHomeMode("tunes")
-                }
-              }
-            }
+            
 
 
-            // Tune search (iTunes, free, previews, under More)
-            Rectangle {
-              width: parent.width
-              height: visible ? Style.space(30) : 0
-              visible: root.homeMore && root.homeMode === "tunes"
-              radius: height / 2
-              color: root.raised
-              TextInput {
-                id: homeTunesField
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(13)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(13)
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.ink
-                selectionColor: root.accent
-                selectedTextColor: root.onAccent
-                font.family: root.uiFont
-                font.pixelSize: Style.font.bodySmall
-                clip: true
-                onTextChanged: {
-                  if (text.trim().length >= 2) homeTunesTimer.restart()
-                }
-                Text {
-                  text: "Artist, genre, mood… (free previews)"
-                  color: root.muted
-                  font: homeTunesField.font
-                  visible: !homeTunesField.text
-                }
-                Keys.onPressed: function(event) {
-                  if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    homeTunesTimer.stop()
-                    root.homeTunesQuery = text.trim()
-                    homeModel.clear()
-                    root.reloadHome()
-                    event.accepted = true
-                  }
-                }
-              }
-            }
+            
 
             Text {
               width: parent.width
@@ -3223,7 +3244,7 @@ Item {
                     height: Style.space(48)
                     radius: Style.space(7)
                     color: artistFindHover.containsMouse ? root.raised : "transparent"
-                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     Row {
                       z: 2
                       anchors.fill: parent
@@ -3431,7 +3452,7 @@ Item {
                     height: Style.space(60)
                     radius: Style.space(7)
                     color: artistCellHover.containsMouse ? root.raised : "transparent"
-                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     Row {
                       z: 2
                       anchors.fill: parent
@@ -3470,6 +3491,7 @@ Item {
                       Text {
                         text: "x"
                         color: artistUnfollowHover.containsMouse ? root.accent : root.muted
+                        Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                         font.family: root.uiFont
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
@@ -3514,7 +3536,7 @@ Item {
                     height: Style.space(48)
                     radius: Style.space(7)
                     color: artistSongHover.containsMouse ? root.raised : "transparent"
-                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     Row {
                       z: 2
                       anchors.fill: parent
@@ -3564,7 +3586,7 @@ Item {
                         transformOrigin: Item.Center
                         scale: artistYtHover.pressed ? 0.94 : 1.0
                         Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-                        Behavior on border.color { ColorAnimation { duration: 120 } }
+                        Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                         Text {
                           anchors.centerIn: parent
                           text: "YT"
@@ -3572,7 +3594,7 @@ Item {
                           font.family: root.uiFont
                           font.pixelSize: Style.font.caption
                           font.bold: true
-                          Behavior on color { ColorAnimation { duration: 120 } }
+                          Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                         }
                         MouseArea {
                           id: artistYtHover
@@ -3646,7 +3668,7 @@ Item {
               width: parent.width
               height: parent.height - y
               visible: !root.homeLoading && homeModel.count === 0
-              text: root.homeMode === "tunes" ? "Search anything — previews play instantly" : (root.homeMode === "radio" ? "Pick a genre for free live radio" : (root.homeMode === "artist" ? "Artists - pick a name for the mix station" : (root.homeMode === "top" ? "Today's top songs — ▶ plays the full track" : "For you - fresh picks with reasons")))
+              text: (root.homeMode === "radio" ? "Pick a genre for free live radio" : (root.homeMode === "artist" ? "Artists - pick a name for the mix station" : (root.homeMode === "top" ? "Today's top songs — ▶ plays the full track" : "For you - fresh picks with reasons")))
               color: root.muted
               font.family: root.uiFont
               font.pixelSize: Style.font.body
@@ -3656,16 +3678,7 @@ Item {
           }
         }
 
-        Timer {
-          id: homeTunesTimer
-          interval: 600
-          repeat: false
-          onTriggered: {
-            root.homeTunesQuery = homeTunesField.text.trim()
-            homeModel.clear()
-            root.reloadHome()
-          }
-        }
+        
 
         // Track list
         ListView {
@@ -3736,6 +3749,7 @@ Item {
                 Text {
                   text: root.formatOffset(root.trackLyricOffset)
                   color: root.trackLyricOffset !== 0 ? root.accent : root.muted
+                  Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   font.family: root.uiFont
                   font.pixelSize: Style.font.caption
                   MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setTab(7) }
@@ -3774,7 +3788,7 @@ Item {
                 width: ListView.view ? ListView.view.width : 0
                 height: lyricText.height + Style.space(2)
                 opacity: !root.lyricsSynced ? 1.0 : (isActive ? 1.0 : (dist === 1 ? 0.85 : (dist === 2 ? 0.6 : 0.35)))
-                Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 onIsActiveChanged: if (isActive && root.lyricsSynced) activateAnim.restart()
                 Text {
                   id: lyricText
@@ -3784,6 +3798,7 @@ Item {
                   text: lyricRow.text
                   textFormat: Text.PlainText
                   color: lyricRow.isActive ? root.ink : root.muted
+                  Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   font.family: root.uiFont
                   font.pixelSize: lyricRow.isActive ? Style.font.body : Style.font.bodySmall
                   font.bold: lyricRow.isActive
@@ -3808,8 +3823,8 @@ Item {
                 }
                 ParallelAnimation {
                   id: activateAnim
-                  NumberAnimation { target: lyricSlide; property: "y"; from: 8; to: 0; duration: 280; easing.type: Easing.OutCubic }
-                  NumberAnimation { target: lyricText; property: "opacity"; from: 0; to: 1; duration: 280; easing.type: Easing.OutCubic }
+                  NumberAnimation { target: lyricSlide; property: "y"; from: 8; to: 0; duration: 200; easing.type: Easing.OutCubic }
+                  NumberAnimation { target: lyricText; property: "opacity"; from: 0; to: 1; duration: 180; easing.type: Easing.OutCubic }
                 }
                 SequentialAnimation {
                   id: glowBreath
@@ -3892,10 +3907,21 @@ Item {
                   picked: function(v) { root.loopMode = v; root.runCmd(["loop", v]) }
                 }
               }
+              SettingRow {
+                title: "Buffer profile"
+                desc: "Data vs prebuffer: saver sips, smooth preloads"
+                control: SettingCycle {
+                  options: ["saver", "balanced", "smooth"]
+                  labels: ["Saver", "Balanced", "Smooth"]
+                  current: root.bufferMode
+                  picked: function(v) { root.bufferMode = v; root.saveSetting("buffer", v); root.notice = "Buffer: " + v + " (next track)"; noticeTimer.restart() }
+                }
+              }
               Item {
                 width: parent.width
-                height: Style.space(58)
+                height: visible ? seekStyleCol.childrenRect.height : 0
                 Column {
+                  id: seekStyleCol
                   width: parent.width
                   spacing: Style.space(4)
                   Text {
@@ -3906,11 +3932,13 @@ Item {
                     font.pixelSize: Style.font.bodySmall
                     font.bold: true
                   }
-                  Row {
-                    spacing: Style.space(4)
+                  Flow {
+                    width: parent.width
+                    spacing: Style.space(5)
+                    height: childrenRect.height
                     Repeater {
-                      model: ["default", "wave", "lightning", "spiral", "dots", "mirror", "neon"]
-                      delegate: Rectangle {
+                      model: ["default", "wave", "lightning", "spiral", "dots", "mirror", "neon", "blocks", "gradient"]
+                    delegate: Rectangle {
                         width: 70
                         height: 38
                         radius: 6
@@ -4063,6 +4091,41 @@ Item {
                                 ctx.arc(splitX, waveY(splitX), 4, 0, 2 * Math.PI)
                                 ctx.fill()
                                 ctx.restore()
+                                return
+                              }
+                              if (kind === "blocks") {
+                                var BN = 22
+                                var bStep = w / BN
+                                var bW = Math.max(2, bStep - 3)
+                                for (var bi = 0; bi < BN; bi++) {
+                                  var bx = (bi + 0.5) / BN * w
+                                  var bH = (bi % 2 === 0) ? 10 : 5
+                                  ctx.fillStyle = (bx <= splitX) ? playedCss : restCss
+                                  ctx.fillRect(bx - bW / 2, midY - bH / 2, bW, bH)
+                                }
+                                return
+                              }
+                              if (kind === "gradient") {
+                                ctx.lineCap = "round"
+                                ctx.strokeStyle = restCss
+                                ctx.lineWidth = 4
+                                ctx.beginPath()
+                                ctx.moveTo(0, midY)
+                                ctx.lineTo(w, midY)
+                                ctx.stroke()
+                                var grd = ctx.createLinearGradient(0, 0, splitX, 0)
+                                grd.addColorStop(0, playedCss)
+                                grd.addColorStop(1, playedCss)
+                                ctx.strokeStyle = grd
+                                ctx.lineWidth = 4
+                                ctx.beginPath()
+                                ctx.moveTo(0, midY)
+                                ctx.lineTo(splitX, midY)
+                                ctx.stroke()
+                                ctx.fillStyle = playedCss
+                                ctx.beginPath()
+                                ctx.arc(splitX, midY, 3, 0, 2 * Math.PI)
+                                ctx.fill()
                                 return
                               }
                               var N = 24
@@ -4259,14 +4322,54 @@ Item {
 
               Item {
                 width: parent.width
-                height: Style.space(26)
+                height: visible ? Style.space(64) : 0
+                visible: root.stagedFontPath !== ""
                 clip: true
-                ListView {
-                  anchors.fill: parent
-                  orientation: ListView.Horizontal
-                  model: ["Noto Sans", "Noto Serif", "Liberation Sans", "Liberation Serif", "JetBrains Mono", "Omarchy system"]
+                Column {
+                  width: parent.width
+                  spacing: Style.space(4)
+                  FontLoader {
+                    id: stagedFontLoader
+                    source: root.stagedFontPath
+                  }
+                  Text {
+                    width: parent.width
+                    text: "Ag Quick brown fox 123"
+                    textFormat: Text.PlainText
+                    color: root.ink
+                    font.family: stagedFontLoader.status === FontLoader.Ready ? stagedFontLoader.name : root.uiFont
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
+                  Row {
+                    spacing: Style.space(6)
+                    SettingBtn {
+                      label: "Apply"
+                      tapped: function() {
+                        var p = root.stagedFontPath
+                        root.stagedFontPath = ""
+                        if (p !== "") root.installFont(p)
+                      }
+                    }
+                    SettingBtn {
+                      label: "Cancel"
+                      tapped: function() { root.stagedFontPath = "" }
+                    }
+                  }
+                }
+              }
+
+              Item {
+                width: parent.width
+                height: visible ? fontFlow.childrenRect.height : 0
+                clip: true
+                Flow {
+                  id: fontFlow
+                  width: parent.width
                   spacing: Style.space(5)
-                  clip: true
+                  height: childrenRect.height
+                  Repeater {
+                    model: ["Noto Sans", "Noto Serif", "Liberation Sans", "Liberation Serif", "JetBrains Mono", "Omarchy system"]
                   delegate: Rectangle {
                     height: Style.space(24)
                     width: fontPresetLabel.width + Style.space(14)
@@ -4297,6 +4400,8 @@ Item {
                         }
                       }
                     }
+                    
+                  }
                   }
                 }
               }
@@ -4432,6 +4537,13 @@ Item {
           wrapMode: Text.WordWrap
         }
 
+        // Fullscreen dock bottom slot: holds dockRow when fullscreen.
+        Item {
+          id: dockBottomSlot
+          width: parent.width
+          height: root.fullScreen ? Style.space(36) : 0
+          visible: root.fullScreen
+        }
         // Bottom bar: version bottom-left, credit bottom-center (kept short so
         // the two can never overlap — the v1.2 footer-collision report).
         // Update cluster lives here (compact): version + check icon + short
@@ -4481,7 +4593,67 @@ Item {
               tapped: function() { root.applyUpdate(true) }
             }
           }
+          // Fullscreen toggle: centered between left cluster (max 150) and
+          // right credit. Center with width 22 leaves 30+ gap each side.
+          Item {
+            id: fsToggle
+            width: 22
+            height: 22
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            Canvas {
+              id: fsCanvas
+              anchors.fill: parent
+              property bool isFull: root.fullScreen
+              property color acc: root.accent
+              onIsFullChanged: requestPaint()
+              onAccChanged: requestPaint()
+              Component.onCompleted: requestPaint()
+              onPaint: {
+                var ctx = getContext("2d")
+                var w = width
+                var h = height
+                ctx.clearRect(0, 0, w, h)
+                if (w <= 0 || h <= 0) return
+                var a = fsCanvas.acc
+                ctx.strokeStyle = "rgba(" + Math.round(a.r * 255) + "," + Math.round(a.g * 255) + "," + Math.round(a.b * 255) + ",1)"
+                ctx.lineWidth = 2
+                ctx.lineCap = "round"
+                ctx.lineJoin = "round"
+                var m = fsCanvas.isFull ? 8 : 4
+                var len = 5
+                ctx.beginPath()
+                ctx.moveTo(m + len, m)
+                ctx.lineTo(m, m)
+                ctx.lineTo(m, m + len)
+                ctx.moveTo(w - m - len, m)
+                ctx.lineTo(w - m, m)
+                ctx.lineTo(w - m, m + len)
+                ctx.moveTo(m, h - m - len)
+                ctx.lineTo(m, h - m)
+                ctx.lineTo(m + len, h - m)
+                ctx.moveTo(w - m - len, h - m)
+                ctx.lineTo(w - m, h - m)
+                ctx.lineTo(w - m, h - m - len)
+                ctx.stroke()
+              }
+            }
+            MouseArea {
+              id: fsHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.saveSetting("fullscreen", root.fullScreen?"off":"on")
+                root.fullScreen = !root.fullScreen
+                root.notice = root.fullScreen ? "Fullscreen on" : "Fullscreen off"
+                noticeTimer.restart()
+              }
+            }
+            InfoTip { watched: fsHover; tipText: root.fullScreen ? "Collapse" : "Expand"; delayMs: 3000 }
+          }
           Text {
+            id: creditText
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: "♥ itsdotdev · fork"
@@ -4489,6 +4661,21 @@ Item {
             opacity: 0.7
             font.family: root.uiFont
             font.pixelSize: Style.font.caption
+            rotation: 0
+            transformOrigin: Item.Center
+            Behavior on rotation { NumberAnimation { duration: 600; easing.type: Easing.OutBack } }
+            MouseArea {
+              id: creditSpin
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                creditText.rotation += 360
+                if (creditText.text === "♥ itsdotdev · fork") creditText.text = "Made with ♥ + mpv"
+                else if (creditText.text === "Made with ♥ + mpv") creditText.text = "No login, no masters"
+                else creditText.text = "♥ itsdotdev · fork"
+              }
+            }
           }
         }
       }
@@ -4545,7 +4732,7 @@ Item {
     color: stog.on ? root.accent : "transparent"
     border.width: 1
     border.color: stog.on ? root.accent : root.muted
-    Behavior on color { ColorAnimation { duration: 140 } }
+    Behavior on color { ColorAnimation { duration: 140; easing.type: Easing.OutCubic } }
     Rectangle {
       width: Style.space(15)
       height: width
@@ -4553,6 +4740,7 @@ Item {
       x: stog.on ? parent.width - width - Style.space(4) : Style.space(4)
       anchors.verticalCenter: parent.verticalCenter
       color: stog.on ? root.onAccent : root.muted
+      Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
       Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
     }
     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (stog.flipped) stog.flipped() }
@@ -4612,7 +4800,7 @@ Item {
     transformOrigin: Item.Center
     scale: cycHover.pressed ? 0.96 : 1.0
     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-    Behavior on border.color { ColorAnimation { duration: 120 } }
+    Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Text {
       id: cycLabel
       anchors.centerIn: parent
@@ -4621,7 +4809,7 @@ Item {
       font.family: root.uiFont
       font.pixelSize: Style.font.caption
       font.bold: true
-      Behavior on color { ColorAnimation { duration: 120 } }
+      Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
     MouseArea {
       id: cycHover
@@ -4649,9 +4837,9 @@ Item {
     border.color: root.accent
     transformOrigin: Item.Center
     scale: sbtnHover.pressed ? 0.96 : 1.0
-    Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-    Behavior on border.color { ColorAnimation { duration: 120 } }
+    Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Text {
       id: sbtnLabel
       anchors.centerIn: parent
@@ -4660,7 +4848,7 @@ Item {
       font.family: root.uiFont
       font.pixelSize: Style.font.caption
       font.bold: true
-      Behavior on color { ColorAnimation { duration: 120 } }
+      Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
     MouseArea {
       id: sbtnHover
@@ -4682,6 +4870,7 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       text: (eqs.gain > 0 ? "+" : "") + (Math.round(eqs.gain * 2) / 2)
       color: eqs.gain !== 0 ? root.accent : root.muted
+      Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
       font.family: root.uiFont
       font.pixelSize: Style.font.caption
       font.bold: eqs.gain !== 0
@@ -4727,8 +4916,8 @@ Item {
         y: parent.height / 2 - eqs.gain / 12 * (parent.height / 2) - height / 2
         transformOrigin: Item.Center
         scale: (eqHandle.containsMouse || eqHandle.pressed) ? 1.3 : 1.0
-        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-        Behavior on color { ColorAnimation { duration: 120 } }
+        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
       }
       MouseArea {
         id: eqHandle
@@ -4776,15 +4965,15 @@ Item {
     border.width: (primary || active) ? 2 : 1
     border.color: primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))
     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-    Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
-    Behavior on border.color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Text {
       anchors.centerIn: parent
       text: tbtn.glyph
       color: (tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)
       font.family: root.iconFont
       font.pixelSize: tbtn.large ? Style.font.iconLarge : Style.font.bodySmall
-      Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
+      Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
     MouseArea {
       id: btnHover
@@ -4793,7 +4982,7 @@ Item {
       cursorShape: Qt.PointingHandCursor
       onClicked: if (tbtn.tapped) tbtn.tapped()
     }
-    InfoTip { watched: btnHover; tipText: tbtn.tip; delayMs: root.helpMode ? 3000 : 5000 }
+    InfoTip { watched: btnHover; tipText: tbtn.tip; delayMs: 3000 }
   }
 
   component HomeRow: Rectangle {
@@ -4810,7 +4999,7 @@ Item {
     height: reason !== "" ? Style.space(62) : Style.space(48)
     radius: Style.space(7)
     color: homeArea.containsMouse ? root.raised : "transparent"
-    Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
     Row {
       z: 2
@@ -4885,7 +5074,7 @@ Item {
         transformOrigin: Item.Center
         scale: ytHover.pressed ? 0.94 : 1.0
         Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
-        Behavior on border.color { ColorAnimation { duration: 120 } }
+        Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
         Text {
           anchors.centerIn: parent
           text: "YT"
@@ -4893,7 +5082,7 @@ Item {
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
           font.bold: true
-          Behavior on color { ColorAnimation { duration: 120 } }
+          Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
         }
         MouseArea {
           id: ytHover
@@ -4905,7 +5094,7 @@ Item {
             root.ytSearchAndPlay(r.artist + " " + r.title)
           }
         }
-        InfoTip { watched: ytHover; tipText: "Full version on YouTube"; delayMs: root.helpMode ? 3000 : 5000 }
+        InfoTip { watched: ytHover; tipText: "Full version on YouTube"; delayMs: 3000 }
       }
     }
 
@@ -4931,13 +5120,14 @@ Item {
     width: ListView.view ? ListView.view.width : 0
     height: Style.space(46)
     opacity: (root.queueAligned && index < root.currentIndex) ? 0.45 : 1
+    Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     radius: Style.space(7)
     readonly property bool rowHovered: trackArea.containsMouse || mixArea.containsMouse || saveArea.containsMouse || listArea.containsMouse || dlArea.containsMouse
     readonly property bool isCurrent: trackRow.videoId === root.currentVideoId
     color: index === root.selectedIndex ? root.raised : (rowHovered ? root.raised : "transparent")
     scale: trackArea.pressed ? 0.99 : 1.0
     transformOrigin: Item.Center
-    Behavior on color { ColorAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
     Row {
@@ -4961,7 +5151,7 @@ Item {
         width: parent.width - Style.space(36) - Style.space(88) - Style.space(26) - Style.space(34) - parent.spacing * 3
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
-        Text { width: parent.width; text: trackRow.title; textFormat: Text.PlainText; color: trackRow.isCurrent ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.isCurrent; elide: Text.ElideRight }
+        Text { width: parent.width; text: trackRow.title; textFormat: Text.PlainText; color: trackRow.isCurrent ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.isCurrent; elide: Text.ElideRight; Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } } }
         Text { width: parent.width; text: trackRow.artist; textFormat: Text.PlainText; color: root.muted; font.family: root.uiFont; font.pixelSize: Style.font.caption; elide: Text.ElideRight }
       }
 
@@ -4970,7 +5160,7 @@ Item {
         width: Style.space(88)
         height: parent.height
         opacity: rowHovered ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         Row {
           id: hoverRow
           anchors.centerIn: parent
@@ -4979,28 +5169,32 @@ Item {
             text: "󰀃"; color: mixArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
             scale: mixArea.containsMouse ? 1.12 : 1.0
             transformOrigin: Item.Center
-            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: mixArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.startMix(trackRow.videoId) }
           }
           Text {
             text: "󰣐"; color: saveArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
             scale: saveArea.containsMouse ? 1.12 : 1.0
             transformOrigin: Item.Center
-            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: saveArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.saveTrack(trackRow.index) }
           }
           Text {
             text: "+"; color: root.addTargetPlaylist ? root.accent : (listArea.containsMouse ? root.ink : root.muted); font.family: root.iconFont; font.pixelSize: Style.font.bodySmall; font.bold: true
             scale: listArea.containsMouse ? 1.12 : 1.0
             transformOrigin: Item.Center
-            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: listArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.addTrackToPlaylist(trackRow.index) }
           }
           Text {
             text: "󰇚"; color: dlArea.containsMouse ? root.ink : root.muted; font.family: root.iconFont; font.pixelSize: Style.font.bodySmall
             scale: dlArea.containsMouse ? 1.12 : 1.0
             transformOrigin: Item.Center
-            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: dlArea; anchors.fill: parent; anchors.margins: -Style.space(4); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.downloadTrack(trackRow.index) }
           }
         }

@@ -69,7 +69,7 @@ commit() {
 # (including 450ms status polls), so it must NEVER rewrite the file when all
 # keys are present — an unconditional rewrite raced with `set` and silently
 # reverted the user's change within a second (the "settings don't stick" bug).
-SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta","barmode":"full","seekstyle":"default","viz":"on"}'
+SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta","barmode":"full","seekstyle":"default","buffer":"balanced","viz":"on","fullscreen":"off"}'
 if [[ -e "$SETTINGS_FILE" ]]; then
   if ! jq -e --argjson d "$SETTINGS_DEFAULTS" '($d | keys_unsorted) - (keys_unsorted) | length == 0' "$SETTINGS_FILE" >/dev/null 2>&1; then
     tmp_s="$RUNTIME_DIR/settings.merge.tmp"
@@ -311,11 +311,29 @@ build_dsp_args() {
   fi
 }
 
+# Buffer profile -> mpv cache knobs (fixed literals, never user input).
+# saver = lean, balanced = current behavior, smooth = large prefetch.
+build_buffer_args() {
+  local buf
+  buf="$(sget buffer 2>/dev/null || printf balanced)"
+  case "$buf" in
+    saver|balanced|smooth) ;;
+    *) buf=balanced ;;
+  esac
+  BUFFER_ARGS=()
+  case "$buf" in
+    saver) BUFFER_ARGS+=(--demuxer-max-bytes=8M --demuxer-readahead-secs=5 --cache-secs=5) ;;
+    balanced) BUFFER_ARGS+=(--demuxer-max-bytes=24M --demuxer-readahead-secs=15 --cache-secs=15) ;;
+    smooth) BUFFER_ARGS+=(--demuxer-max-bytes=80M --demuxer-readahead-secs=30 --cache-secs=30) ;;
+  esac
+}
+
 launch_id() {
   local vid="$1" target
   require mpv
   target="$(resolve_playable "$vid")" || return 1
   build_dsp_args
+  build_buffer_args
   kill_old_mpv
   # --cache for network streams; harmless for local files. --no-video keeps it
   # audio-only and cheap. --ytdl=no: we already resolved, mpv must NOT run its
@@ -324,9 +342,11 @@ launch_id() {
     mpv --no-video --force-window=no --input-ipc-server="$SOCKET" \
       "${DSP_ARGS[@]}" --volume="$VOL" --title='YTMusic Plus' "$target" 9>&- >/dev/null 2>&1 &
   else
-    mpv --no-video --force-window=no --input-ipc-server="$SOCKET" \
-      --ytdl=no --cache=yes --demuxer-max-bytes=24M \
-      "${DSP_ARGS[@]}" --volume="$VOL" --title='YTMusic Plus' "$target" 9>&- >/dev/null 2>&1 &
+    local -a net_args=(--no-video --force-window=no --input-ipc-server="$SOCKET"
+      --ytdl=no --cache=yes)
+    net_args+=("${BUFFER_ARGS[@]}")
+    net_args+=("${DSP_ARGS[@]}" --volume="$VOL" --title='YTMusic Plus')
+    mpv "${net_args[@]}" "$target" 9>&- >/dev/null 2>&1 &
   fi
   local mpv_pid=$!
   printf '%s\n' "$mpv_pid" >"$PID_FILE"
@@ -432,8 +452,11 @@ launch_stream() {
   require mpv
   [[ "$url" == http://* || "$url" == https://* ]] || return 2
   build_dsp_args
+  build_buffer_args
   local -a args=(--no-video --force-window=no --input-ipc-server="$SOCKET"
-    --ytdl=no --cache=yes --demuxer-max-bytes=24M --volume="$VOL" --title='YTMusic Plus')
+    --ytdl=no --cache=yes)
+  args+=("${BUFFER_ARGS[@]}")
+  args+=(--volume="$VOL" --title='YTMusic Plus')
   args+=("${DSP_ARGS[@]}")
   kill_old_mpv
   mpv "${args[@]}" "$url" 9>&- >/dev/null 2>&1 &
@@ -933,6 +956,7 @@ case "${1:-}" in
     loop_mode="$(sget loop)"; [[ "$loop_mode" == all || "$loop_mode" == one ]] || loop_mode=off
     barMode="$(sget barmode)"; [[ "$barMode" == full || "$barMode" == compact ]] || barMode=full
     viz="$(sget viz)"; [[ "$viz" == on || "$viz" == off ]] || viz=on
+    fullscreen="$(sget fullscreen)"; [[ "$fullscreen" == on || "$fullscreen" == off ]] || fullscreen=off
     silence_on="false"; [[ "$(sget silence)" == on ]] && silence_on="true"
     norm_on="false"; [[ "$(sget normalize)" == on ]] && norm_on="true"
     sleep_until=0; [[ -r "$SLEEP_FILE" ]] && sleep_until="$(<"$SLEEP_FILE")"
@@ -946,14 +970,16 @@ case "${1:-}" in
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
           --arg barMode "$barMode" \
           --arg viz "$viz" \
-          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz}' "$STATE_FILE"
+          --arg fullscreen "$fullscreen" \
+          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz,fullscreen:$fullscreen}' "$STATE_FILE"
       else
         jq -cn --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
           --argjson silence "$silence_on" --argjson normalize "$norm_on" \
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
           --arg barMode "$barMode" \
           --arg viz "$viz" \
-          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz}'
+          --arg fullscreen "$fullscreen" \
+          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz,fullscreen:$fullscreen}'
       fi
       exit 0
     fi
@@ -974,35 +1000,38 @@ case "${1:-}" in
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
           --arg barMode "$barMode" \
           --arg viz "$viz" \
-          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz}' "$STATE_FILE"
+          --arg fullscreen "$fullscreen" \
+          '. + {running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz,fullscreen:$fullscreen}' "$STATE_FILE"
       else
         jq -cn --slurpfile queue "$QUEUE_FILE" --arg loop "$loop_mode" \
           --argjson silence "$silence_on" --argjson normalize "$norm_on" \
           --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
           --arg barMode "$barMode" \
           --arg viz "$viz" \
-          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz}'
+          --arg fullscreen "$fullscreen" \
+          '{running:false,paused:true,position:0,playbackDuration:0,queue:($queue[0] // []),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz,fullscreen:$fullscreen}'
       fi
       exit 0
     fi
     if [[ -s "$STATE_FILE" ]]; then
       jq -sc --slurpfile track "$STATE_FILE" --slurpfile queue "$QUEUE_FILE" \
         --arg loop "$loop_mode" --argjson silence "$silence_on" --argjson normalize "$norm_on" \
-        --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" --arg barMode "$barMode" --arg viz "$viz" '($track[0] // {}) + {
+        --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" --arg barMode "$barMode" --arg viz "$viz" --arg fullscreen "$fullscreen" '($track[0] // {}) + {
         running:true,
         paused:((map(select(.request_id == 1))[0].data) // false),
         position:((map(select(.request_id == 2))[0].data) // 0),
         playbackDuration:((map(select(.request_id == 3))[0].data) // 0),
         queue:($queue[0] // []),
         loop:$loop, silence:$silence, normalize:$normalize,
-        sleepUntil:$sleepUntil, sleepMode:$sleepMode, barMode:$barMode, viz:$viz
+        sleepUntil:$sleepUntil, sleepMode:$sleepMode, barMode:$barMode, viz:$viz, fullscreen:$fullscreen
       }' <<<"$responses"
     else
       jq -sc --arg loop "$loop_mode" --argjson silence "$silence_on" --argjson normalize "$norm_on" \
         --argjson sleepUntil "$sleep_until" --arg sleepMode "$sleep_mode" \
         --arg barMode "$barMode" \
         --arg viz "$viz" \
-        '{running:true,paused:((map(select(.request_id == 1))[0].data)//false),position:((map(select(.request_id == 2))[0].data)//0),playbackDuration:((map(select(.request_id == 3))[0].data)//0),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz}' <<<"$responses"
+        --arg fullscreen "$fullscreen" \
+        '{running:true,paused:((map(select(.request_id == 1))[0].data)//false),position:((map(select(.request_id == 2))[0].data)//0),playbackDuration:((map(select(.request_id == 3))[0].data)//0),loop:$loop,silence:$silence,normalize:$normalize,sleepUntil:$sleepUntil,sleepMode:$sleepMode,barMode:$barMode,viz:$viz,fullscreen:$fullscreen}' <<<"$responses"
     fi
     ;;
   # ---- saves: library (liked tracks) --------------------------------------
@@ -1307,9 +1336,13 @@ case "${1:-}" in
       barmode)
         [[ "$val" == full || "$val" == compact ]] || { printf 'barmode must be full|compact\n' >&2; exit 2; } ;;
       seekstyle)
-        [[ "$val" == default || "$val" == wave || "$val" == lightning || "$val" == spiral || "$val" == dots || "$val" == mirror || "$val" == neon ]] || { printf 'seekstyle must be default|wave|lightning|spiral|dots|mirror|neon\n' >&2; exit 2; } ;;
+        [[ "$val" == default || "$val" == wave || "$val" == lightning || "$val" == spiral || "$val" == dots || "$val" == mirror || "$val" == neon || "$val" == blocks || "$val" == gradient ]] || { printf 'seekstyle must be default|wave|lightning|spiral|dots|mirror|neon|blocks|gradient\n' >&2; exit 2; } ;;
+      buffer)
+        [[ "$val" == saver || "$val" == balanced || "$val" == smooth ]] || { printf 'buffer must be saver|balanced|smooth\n' >&2; exit 2; } ;;
       viz)
         [[ "$val" == on || "$val" == off ]] || { printf 'viz must be on|off\n' >&2; exit 2; } ;;
+      fullscreen)
+        [[ "$val" == on || "$val" == off ]] || { printf 'fullscreen must be on|off\n' >&2; exit 2; } ;;
       eqPreset)
         eq_preset_gains "$val" >/dev/null || { printf 'unknown eq preset\n' >&2; exit 2; } ;;
       eqGains)
