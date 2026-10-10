@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.3.1 stable"
+  readonly property string appVersion: "v2.3.2 stable"
 
   property bool opened: false
   property bool searching: false
@@ -959,6 +959,7 @@ Item {
     } catch (e) {
       console.warn("YTMusic Plus: invalid settings", e)
     }
+    Qt.callLater(function() { try { waveCanvas.requestPaint() } catch (e2) {} })
   }
 
   function eqSetPreset(name) {
@@ -4267,9 +4268,9 @@ Item {
                                   ctx.fill()
                                 }
                                 for (var tii = 0; tii < 3; tii++) {
-                                  var ttx = (0.2 + tii * 0.3) * w
+                                  var ttx = (0.2 + tii * 0.3) * w + (stSeed(10 + tii) - 0.5) * 8
                                   var tty = (tii % 2 === 0) ? 2.5 : (h - 2.5)
-                                  var tts = 3
+                                  var tts = 3 + stSeed(20 + tii) * 2
                                   var ttw = 0.35 + 0.55 * Math.abs(Math.sin(phase + tii * 2.1))
                                   ctx.fillStyle = (tii % 2 === 0) ? "rgba(255,255,255," + ttw.toFixed(3) + ")" : css(root.accent, ttw)
                                   ctx.beginPath()
@@ -4327,7 +4328,7 @@ Item {
                               if (kind === "mirror") {
                                 var MN = 56
                                 var mHash = function(i) { var x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x) }
-                                var mbw = 1
+                                var mbw = w < 100 ? 1 : 2
                                 for (var mi = 0; mi < MN; mi++) {
                                   var h01 = mHash(mi)
                                   var bh = 2 + h01 * Math.max(2, (h - 4))
@@ -4376,6 +4377,7 @@ Item {
                                 for (var bi = 0; bi < BN; bi++) {
                                   var bx = (bi + 0.5) / BN * w
                                   var bH = (bi % 2 === 0) ? 10 : 5
+                                  if (bH > h) bH = h
                                   ctx.fillStyle = (bx <= splitX) ? playedCss : restCss
                                   ctx.fillRect(bx - bW / 2, midY - bH / 2, bW, bH)
                                 }
@@ -4389,9 +4391,16 @@ Item {
                                 ctx.moveTo(0, midY)
                                 ctx.lineTo(w, midY)
                                 ctx.stroke()
+                                var ar = Math.round(root.accent.r * 255)
+                                var ag = Math.round(root.accent.g * 255)
+                                var ab = Math.round(root.accent.b * 255)
+                                var lr = Math.round(ar + (255 - ar) * 0.35)
+                                var lg = Math.round(ag + (255 - ag) * 0.35)
+                                var lb = Math.round(ab + (255 - ab) * 0.35)
+                                var lightCss = "rgba(" + lr + "," + lg + "," + lb + ",1)"
                                 var grd = ctx.createLinearGradient(0, 0, splitX, 0)
                                 grd.addColorStop(0, playedCss)
-                                grd.addColorStop(1, playedCss)
+                                grd.addColorStop(1, lightCss)
                                 ctx.strokeStyle = grd
                                 ctx.lineWidth = 4
                                 ctx.beginPath()
@@ -4410,7 +4419,8 @@ Item {
                                 var isPlayed = dx <= splitX
                                 var dr = 1.5
                                 if (isPlayed) {
-                                  dr = 1.5 + 2.5 * (dx / splitX)
+                                  var tt = splitX > 0 ? (dx / splitX) : 0
+                                  dr = 1.5 + 2.5 * tt
                                   ctx.fillStyle = playedCss
                                 } else {
                                   ctx.fillStyle = restCss

@@ -41,10 +41,13 @@ BarWidget {
   property double lastActiveMs: 0
   property bool idleHidden: false
   property string barMode: "full"
+  property bool barExpand: true
   property bool fullScreen: false
   property bool vizOn: true
+  readonly property bool barHover: pillHover.containsMouse || bodyMouse.containsMouse || compactMouse.containsMouse || bodyMouse.pressed || compactMouse.pressed
+  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.barHover)
 
-  implicitWidth: root.barMode === "compact" ? (typeof barSize !== "undefined" ? barSize : Style.space(30)) : ((root.hasTrack && !root.idleHidden) ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : Style.space(30))
+  implicitWidth: root.pillFull ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : (typeof barSize !== "undefined" ? barSize : Style.space(30))
   implicitHeight: barSize
   Behavior on implicitWidth { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
@@ -99,6 +102,7 @@ BarWidget {
     try {
       var status = JSON.parse(String(raw || "{}"))
       root.barMode = (status.barMode === "compact") ? "compact" : "full"
+      root.barExpand = (status.barExpand === "off") ? false : true
       root.fullScreen = (status.fullscreen === "on")
       root.vizOn = (status.viz === "off") ? false : true
       root.playerRunning = status.running === true
@@ -127,7 +131,7 @@ BarWidget {
 
   Rectangle {
     id: pillBg
-    visible: root.barMode !== "compact"
+    visible: root.barMode !== "compact" && (!root.barExpand || root.pillFull)
     anchors.centerIn: parent
     width: parent.width
     height: Math.max(Style.space(24), parent.height - Style.space(8))
@@ -169,9 +173,9 @@ BarWidget {
 
     Item {
       anchors.fill: parent
-      visible: (!root.hasTrack || root.idleHidden) && root.barMode !== "compact"
-      opacity: ((!root.hasTrack || root.idleHidden) && root.barMode !== "compact") ? 1 : 0
-      scale: ((!root.hasTrack || root.idleHidden) && root.barMode !== "compact") ? 1 : 0.85
+      visible: (!root.hasTrack || root.idleHidden) && root.barMode !== "compact" && !root.barExpand
+      opacity: ((!root.hasTrack || root.idleHidden) && root.barMode !== "compact" && !root.barExpand) ? 1 : 0
+      scale: ((!root.hasTrack || root.idleHidden) && root.barMode !== "compact" && !root.barExpand) ? 1 : 0.85
       transformOrigin: Item.Center
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
       Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
@@ -195,8 +199,8 @@ BarWidget {
       anchors.bottomMargin: Style.space(2)
       width: childrenRect.width
       spacing: Style.space(3)
-      visible: root.hasTrack && !root.idleHidden && root.barMode !== "compact"
-      opacity: (root.hasTrack && !root.idleHidden && root.barMode !== "compact") ? 1 : 0
+      visible: root.pillFull
+      opacity: root.pillFull ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
       Rectangle {
@@ -331,7 +335,7 @@ BarWidget {
       height: Style.space(96)
       x: 0
       y: -height - Style.space(6)
-      visible: posterHover.containsMouse && root.thumbnail !== "" && root.barMode !== "compact"
+      visible: posterHover.containsMouse && root.thumbnail !== "" && root.barMode !== "compact" && root.pillFull
       opacity: posterHover.containsMouse ? 1 : 0
       scale: posterHover.containsMouse ? 1 : 0.9
       transformOrigin: Item.BottomLeft
@@ -369,7 +373,7 @@ BarWidget {
   Item {
     id: compactBox
     anchors.fill: parent
-    visible: root.barMode === "compact"
+    visible: root.barMode === "compact" || (root.barMode !== "compact" && root.barExpand && !root.pillFull)
     Rectangle {
       anchors.fill: parent
       color: root.themeAccent
@@ -382,7 +386,7 @@ BarWidget {
       text: String.fromCharCode(0xF02CB)
       color: root.foreground
       font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
-      font.pixelSize: Style.font.iconLarge
+      font.pixelSize: Style.font.bodySmall
     }
     WaveBars {
       anchors.centerIn: parent
@@ -398,7 +402,7 @@ BarWidget {
       text: String.fromCharCode(0xF03E4)
       color: root.foreground
       font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
-      font.pixelSize: Style.font.iconLarge
+      font.pixelSize: Style.font.bodySmall
     }
     MouseArea {
       id: compactMouse
