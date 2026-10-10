@@ -1,11 +1,25 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **29** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta)
+Updates so far: **30** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
+
+## v2.3.1 beta
+
+> Legendary pass: true shuffle icon, ripple + stellar seekbars copied
+> 1:1 (our palette), pixel logo that bursts, button themes, terminal-size
+> fullscreen, and an updater that refuses downgrades.
+
+- Shuffle was a SIM-alert glyph — now verified true MDI shuffle
+- Spiral + wave retired; Ripple Flow (lowered ribbon, white dot) and
+  Stellar Path (dotted curve, rocket, twinkles, constellation) added
+- YT+ pixel logo: theme gradient shading, click particle burst + reform
+- Button styles classic/glow/soft with live previews; tips 1s dwell
+- Fullscreen 900x700; expand button is diagonal arrows now
+- Update-check version guard: remote older than local → no update offered
 
 ## v2.3 beta
 

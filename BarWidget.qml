@@ -415,8 +415,8 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: playerPopup.fittedContentWidth(root.fullScreen ? Style.space(680) : Style.space(410))
-    contentHeight: playerPopup.cappedContentHeight(root.fullScreen ? Style.space(760) : Style.space(560))
+    contentWidth: playerPopup.fittedContentWidth(root.fullScreen ? Style.space(900) : Style.space(410))
+    contentHeight: playerPopup.cappedContentHeight(root.fullScreen ? Style.space(700) : Style.space(560))
     padding: 0
     margin: Style.gapsOut
     focusTarget: popupPlayerLoader.item ? popupPlayerLoader.item.searchInput : null

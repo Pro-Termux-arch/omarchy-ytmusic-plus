@@ -84,6 +84,11 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   load-parse (whitelist, safe default) + `saveSetting()` + control.
   BarWidget learns settings via `status` JSON fields (it has no settings
   proc): backend adds field at ALL status emissions, QML whitelists it.
+  Current keys: `barmode full|compact`, `seekstyle
+  default|lightning|dots|mirror|neon|blocks|gradient|ripple|stellar`,
+  `btnstyle classic|glow|soft`, `viz on|off`, `buffer
+  saver|balanced|smooth`, `fullscreen on|off` (panel 900x700 via capped
+  helpers; dock drops to bottom in Player).
 
 ## 4. HOWTO: add a seekbar style (key `mystyle`)
 
@@ -113,9 +118,15 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   pattern end to end.
 - Updater contract: `update-check|update-apply [stable|beta]`;
   `UPDATE_CHECK local_version=.. local_sha=.. remote_sha=..
-  available=yes/no/unknown channel=.. target=..`; dirty trees auto-stash;
+  available=yes/no/unknown channel=.. target=..`; VERSION GUARD: local
+  manifest >= remote manifest (sort -V, fail open to SHA logic) forces
+  `available=no` — never offer/apply a downgrade; dirty trees auto-stash;
   failures lead with a short line, detail after; rescan then verify, stale
   manual updates restart the shell, background ones show the copy box.
+- Header logo: canvas pixel-art (5x7 bitmap tables, accent gradient
+  shading, click particle burst+reform, 16ms timer gated on bursting).
+  TransportBtn styles via `previewStyle` override (previews use
+  `tapped: null`). Tooltips: fixed `delayMs: 1000` everywhere.
 
 ## 6. Pre-commit checklist (run all, paste outputs)
 

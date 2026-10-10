@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "local.ytmusic-plus",
   "name": "YTMusic Plus",
-  "version": "2.3-beta",
+  "version": "2.3.1-beta",
   "author": "Pro-Termux-arch",
   "license": "MIT",
   "description": "Privacy-first, login-free YouTube music player: search, mixes, playlists, saved tracks and offline downloads.",

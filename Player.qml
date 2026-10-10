@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.3 beta"
+  readonly property string appVersion: "v2.3.1 beta"
 
   property bool opened: false
   property bool searching: false
@@ -122,6 +122,7 @@ Item {
   property real playbackDuration: 0
   property bool showRemaining: false // time labels: elapsed vs remaining
   property string seekStyle: "default"
+  property string btnStyle: "classic"
   property real wavePhase: 0
   property bool vizOn: true
   property bool fullScreen: false
@@ -936,7 +937,9 @@ Item {
       var bf = String(s.buffer || "balanced")
       bufferMode = (bf === "saver" || bf === "balanced" || bf === "smooth") ? bf : "balanced"
       var sst = String(s.seekstyle || "default")
-      seekStyle = (sst === "default" || sst === "wave" || sst === "lightning" || sst === "spiral" || sst === "dots" || sst === "mirror" || sst === "neon" || sst === "blocks" || sst === "gradient") ? sst : "default"
+      seekStyle = (sst === "default" || sst === "lightning" || sst === "dots" || sst === "mirror" || sst === "neon" || sst === "blocks" || sst === "gradient" || sst === "ripple" || sst === "stellar") ? sst : "default"
+      var bst = String(s.btnstyle || s.btnStyle || "classic")
+      btnStyle = (bst === "classic" || bst === "glow" || bst === "soft") ? bst : "classic"
       vizOn = (s.viz === "off") ? false : true
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
@@ -2026,12 +2029,10 @@ Item {
         Item {
           width: parent.width
           height: Style.space(26)
-          Rectangle {
+          Item {
             id: logoBtn
-            width: 26
-            height: 26
-            radius: 13
-            color: root.accent
+            width: 30
+            height: 30
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             rotation: 0
@@ -2039,22 +2040,151 @@ Item {
             scale: logoHover.pressed ? 0.9 : 1.0
             Behavior on rotation { NumberAnimation { duration: 600; easing.type: Easing.OutBack } }
             Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
-            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
-            Text {
-              anchors.centerIn: parent
-              text: "♪"
-              color: root.onAccent
-              font.pixelSize: 14
-              font.bold: true
+            Canvas {
+              id: logoCanvas
+              anchors.fill: parent
+              property color acc: root.accent
+              property var glyphY: ["X...X", "X...X", ".X.X.", "..X..", "..X..", "..X..", "..X.."]
+              property var glyphT: ["XXXXX", "..X..", "..X..", "..X..", "..X..", "..X..", "..X.."]
+              property var glyphP: [".....", "..X..", "..X..", "XXXXX", "..X..", "..X..", "....."]
+              property var partDX: []
+              property var partDY: []
+              property var partVX: []
+              property var partVY: []
+              property int burstMs: 0
+              property bool bursting: false
+              onAccChanged: requestPaint()
+              Component.onCompleted: requestPaint()
+              onPaint: {
+                var ctx = getContext("2d")
+                var w = width
+                var h = height
+                ctx.clearRect(0, 0, w, h)
+                if (w <= 0 || h <= 0) return
+                var glyphs = [glyphY, glyphT, glyphP]
+                var cols = 17
+                var rows = 7
+                var px = w / cols
+                var ox = (w - cols * px) / 2
+                var oy = (h - rows * px) / 2
+                var ar = Math.round(root.accent.r * 255)
+                var ag = Math.round(root.accent.g * 255)
+                var ab = Math.round(root.accent.b * 255)
+                var idx = 0
+                for (var g = 0; g < 3; g++) {
+                  for (var r = 0; r < 7; r++) {
+                    var row = glyphs[g][r]
+                    var f = 0.45 * (1 - r / 6)
+                    var lr = Math.round(ar + (255 - ar) * f)
+                    var lg = Math.round(ag + (255 - ag) * f)
+                    var lb = Math.round(ab + (255 - ab) * f)
+                    ctx.fillStyle = "rgba(" + lr + "," + lg + "," + lb + ",1)"
+                    for (var c = 0; c < 5; c++) {
+                      if (row[c] === "X") {
+                        var col = g * 6 + c
+                        var bx = ox + col * px
+                        var by = oy + r * px
+                        var dx = 0
+                        var dy = 0
+                        if (idx < partDX.length) {
+                          dx = partDX[idx]
+                          dy = partDY[idx]
+                        }
+                        ctx.fillRect(bx + dx, by + dy, px, px)
+                        idx++
+                      }
+                    }
+                  }
+                }
+              }
+              function hash(i) {
+                var x = Math.sin(i * 12.9898) * 43758.5453
+                return x - Math.floor(x)
+              }
+              function startBurst() {
+                partDX = []
+                partDY = []
+                partVX = []
+                partVY = []
+                var cols = 17
+                var rows = 7
+                var cx = cols / 2
+                var cy = rows / 2
+                var glyphs = [glyphY, glyphT, glyphP]
+                var idx = 0
+                for (var g = 0; g < 3; g++) {
+                  for (var r = 0; r < 7; r++) {
+                    var row = glyphs[g][r]
+                    for (var c = 0; c < 5; c++) {
+                      if (row[c] === "X") {
+                        var col = g * 6 + c
+                        var h1 = hash(idx + 1)
+                        var h2 = hash(idx + 101)
+                        var ang = h1 * 6.2832
+                        var spd = 12 + h2 * 22
+                        var vx = Math.cos(ang) * spd + (col - cx) * 3
+                        var vy = Math.sin(ang) * spd + (r - cy) * 3 - 12
+                        partDX.push(0)
+                        partDY.push(0)
+                        partVX.push(vx)
+                        partVY.push(vy)
+                        idx++
+                      }
+                    }
+                  }
+                }
+                burstMs = 0
+                bursting = true
+                requestPaint()
+              }
+              function tickBurst() {
+                if (!bursting) return
+                burstMs += 16
+                var dt = 0.016
+                var gv = 140
+                if (burstMs < 600) {
+                  for (var i = 0; i < partDX.length; i++) {
+                    partVY[i] += gv * dt
+                    partDX[i] += partVX[i] * dt
+                    partDY[i] += partVY[i] * dt
+                  }
+                } else {
+                  for (var j = 0; j < partDX.length; j++) {
+                    partDX[j] *= 0.85
+                    partDY[j] *= 0.85
+                    partVX[j] *= 0.85
+                    partVY[j] *= 0.85
+                  }
+                }
+                if (burstMs >= 1200) {
+                  partDX = []
+                  partDY = []
+                  partVX = []
+                  partVY = []
+                  burstMs = 0
+                  bursting = false
+                }
+                requestPaint()
+              }
             }
             MouseArea {
               id: logoHover
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: logoBtn.rotation += 360
+              onClicked: {
+                logoBtn.rotation += 360
+                logoCanvas.startBurst()
+              }
             }
-            InfoTip { watched: logoHover; tipText: "YTMusic Plus"; delayMs: 3000 }
+            InfoTip { watched: logoHover; tipText: "YTMusic Plus"; delayMs: 1000 }
+            Timer {
+              id: logoBurstTimer
+              interval: 16
+              repeat: true
+              running: logoCanvas.bursting
+              onTriggered: logoCanvas.tickBurst()
+            }
           }
           Text {
             text: "YTMusic Plus"
@@ -2163,7 +2293,7 @@ Item {
                     onExited: if (root.hoveredTab === index) root.hoveredTab = -1
                     onClicked: root.setTab(index)
                   }
-                  InfoTip { watched: dockHover; tipText: modelData.tip; delayMs: 3000 }
+                  InfoTip { watched: dockHover; tipText: modelData.tip; delayMs: 1000 }
                 }
               }
             }
@@ -2330,7 +2460,7 @@ Item {
                   else root.saveCurrent()
                 }
               }
-              InfoTip { watched: npSaveHover; tipText: root.currentSaved ? "Remove from Favourite" : "Save to Favourite"; delayMs: 3000 }
+              InfoTip { watched: npSaveHover; tipText: root.currentSaved ? "Remove from Favourite" : "Save to Favourite"; delayMs: 1000 }
             }
             // download
             Text {
@@ -2351,7 +2481,7 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.downloadCurrent()
               }
-              InfoTip { watched: npDlHover; tipText: "Download offline (opus)"; delayMs: 3000 }
+              InfoTip { watched: npDlHover; tipText: "Download offline (opus)"; delayMs: 1000 }
             }
             // follow toggle
             Rectangle {
@@ -2403,7 +2533,7 @@ Item {
                   if (root.homeMode === "artist") root.reloadArtists()
                 }
               }
-              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist"; delayMs: 3000 }
+              InfoTip { watched: npFollowHover; tipText: root.currentFollowed ? "Following - tap to unfollow" : "Follow artist"; delayMs: 1000 }
             }
             }
           }
@@ -2458,7 +2588,7 @@ Item {
                       var playedCss = css(root.accent, 1)
                       var restCss = css(root.muted, 0.4)
                       var st = root.seekStyle
-                      if (st !== "default" && st !== "wave" && st !== "lightning" && st !== "spiral" && st !== "dots" && st !== "mirror" && st !== "neon" && st !== "blocks" && st !== "gradient") st = "default"
+                      if (st !== "default" && st !== "lightning" && st !== "dots" && st !== "mirror" && st !== "neon" && st !== "blocks" && st !== "gradient" && st !== "ripple" && st !== "stellar") st = "default"
                       var ratio = Math.min(1, root.position / Math.max(1, root.playbackDuration))
                       var splitX = Math.max(0, Math.min(w, ratio * w))
                       var dotR = (seekHover.containsMouse || seekHover.pressed) ? 5 : 4
@@ -2522,14 +2652,116 @@ Item {
                         }
                         return
                       }
-                      if (st === "wave") {
-                        if (live) { strokeWave(0, w, restCss); return }
-                        strokeWave(0, splitX, playedCss)
-                        strokeWave(splitX, w, restCss)
+                      if (st === "ripple") {
+                        var ripY = function(x) { var a = (x / waveLen) * 2 * Math.PI; return midY + 3 * Math.sin(a + phase) + 1.0 * Math.sin(2.2 * a + 1.3 + phase) }
+                        var ripHalf = function(x) { return 2 + 1.5 * (x / Math.max(1, w)) }
+                        var fillRipple = function(x0, x1, style, glow) {
+                          if (x1 <= x0) return
+                          ctx.save()
+                          if (glow) { ctx.shadowColor = playedCss; ctx.shadowBlur = 6 }
+                          ctx.fillStyle = style
+                          ctx.beginPath()
+                          var rx = x0
+                          ctx.moveTo(rx, ripY(rx) - ripHalf(rx))
+                          rx += 2
+                          while (rx < x1) { ctx.lineTo(rx, ripY(rx) - ripHalf(rx)); rx += 2 }
+                          ctx.lineTo(x1, ripY(x1) - ripHalf(x1))
+                          rx = x1
+                          ctx.lineTo(rx, ripY(rx) + ripHalf(rx))
+                          rx -= 2
+                          while (rx > x0) { ctx.lineTo(rx, ripY(rx) + ripHalf(rx)); rx -= 2 }
+                          ctx.closePath()
+                          ctx.fill()
+                          ctx.restore()
+                        }
+                        var ripAcc = css(root.accent, 0.85)
+                        if (live) { fillRipple(0, w, restCss, false); return }
+                        fillRipple(0, splitX, ripAcc, true)
+                        fillRipple(splitX, w, restCss, false)
+                        ctx.fillStyle = "#ffffff"
+                        ctx.beginPath()
+                        ctx.arc(splitX, ripY(splitX), 4, 0, 2 * Math.PI)
+                        ctx.fill()
+                        return
+                      }
+                      if (st === "stellar") {
+                        var stY = function(x) { var a = (x / waveLen) * 2 * Math.PI; return midY + 4 * Math.sin(a + phase) + 1.5 * Math.sin(2.2 * a + 1.3 + phase) }
+                        var stSeed = function(i) { var x = Math.sin(i * 12.9898 + 4.7) * 43758.5453; return x - Math.floor(x) }
+                        ctx.lineWidth = 1
+                        ctx.strokeStyle = css(root.muted, 0.25)
+                        ctx.beginPath()
+                        var c0x = 0.15 * w, c0y = midY - 5 + stSeed(1) * 2
+                        var c1x = 0.45 * w, c1y = midY + 3 - stSeed(2) * 2
+                        var c2x = 0.72 * w, c2y = midY - 4 + stSeed(3) * 2
+                        ctx.moveTo(c0x, c0y)
+                        ctx.lineTo(c1x, c1y)
+                        ctx.lineTo(c2x, c2y)
+                        ctx.stroke()
+                        for (var sx = 5; sx < w; sx += 10) {
+                          var sy = stY(sx)
+                          var sPlayed = (!live) && (sx <= splitX)
+                          ctx.fillStyle = sPlayed ? playedCss : restCss
+                          ctx.beginPath()
+                          ctx.arc(sx, sy, 1.8, 0, 2 * Math.PI)
+                          ctx.fill()
+                        }
+                        for (var ti = 0; ti < 3; ti++) {
+                          var tx = (0.2 + ti * 0.3) * w + (stSeed(10 + ti) - 0.5) * 8
+                          var ty = (ti % 2 === 0) ? 2.5 : (h - 2.5)
+                          var ts = 3 + stSeed(20 + ti) * 2
+                          var tw = 0.35 + 0.55 * Math.abs(Math.sin(phase + ti * 2.1))
+                          ctx.fillStyle = (ti % 2 === 0) ? "rgba(255,255,255," + tw.toFixed(3) + ")" : css(root.accent, tw)
+                          ctx.beginPath()
+                          ctx.moveTo(tx, ty - ts)
+                          ctx.lineTo(tx + ts * 0.25, ty - ts * 0.25)
+                          ctx.lineTo(tx + ts, ty)
+                          ctx.lineTo(tx + ts * 0.25, ty + ts * 0.25)
+                          ctx.lineTo(tx, ty + ts)
+                          ctx.lineTo(tx - ts * 0.25, ty + ts * 0.25)
+                          ctx.lineTo(tx - ts, ty)
+                          ctx.lineTo(tx - ts * 0.25, ty - ts * 0.25)
+                          ctx.closePath()
+                          ctx.fill()
+                        }
+                        if (live) return
+                        var px = splitX, py = stY(splitX)
+                        var e = 2
+                        var tang = Math.atan2(stY(Math.min(w, px + e)) - stY(Math.max(0, px - e)), 2 * e)
+                        ctx.save()
+                        ctx.translate(px, py)
+                        ctx.rotate(tang)
                         ctx.fillStyle = playedCss
                         ctx.beginPath()
-                        ctx.arc(splitX, waveY(splitX), dotR, 0, 2 * Math.PI)
+                        ctx.moveTo(7, 0)
+                        ctx.lineTo(2, -3)
+                        ctx.lineTo(2, 3)
+                        ctx.closePath()
                         ctx.fill()
+                        ctx.fillRect(-5, -2.5, 7, 5)
+                        ctx.beginPath()
+                        ctx.moveTo(-5, -2.5)
+                        ctx.lineTo(-8, -5)
+                        ctx.lineTo(-5, 0)
+                        ctx.closePath()
+                        ctx.fill()
+                        ctx.beginPath()
+                        ctx.moveTo(-5, 2.5)
+                        ctx.lineTo(-8, 5)
+                        ctx.lineTo(-5, 0)
+                        ctx.closePath()
+                        ctx.fill()
+                        ctx.fillStyle = "#ffffff"
+                        ctx.beginPath()
+                        ctx.arc(-1, 0, 1.8, 0, 2 * Math.PI)
+                        ctx.fill()
+                        ctx.fillStyle = playedCss
+                        ctx.beginPath()
+                        ctx.moveTo(-5, -1.5)
+                        ctx.lineTo(-5, 1.5)
+                        ctx.lineTo(-8, 0)
+                        ctx.closePath()
+                        ctx.fill()
+                        ctx.restore()
                         return
                       }
                       if (st === "lightning") {
@@ -2539,36 +2771,6 @@ Item {
                         ctx.fillStyle = playedCss
                         ctx.beginPath()
                         ctx.arc(splitX, triY(splitX), dotR, 0, 2 * Math.PI)
-                        ctx.fill()
-                        return
-                      }
-                      if (st === "spiral") {
-                        ctx.strokeStyle = restCss
-                        ctx.lineWidth = 2
-                        ctx.lineCap = "round"
-                        ctx.beginPath()
-                        ctx.moveTo(0, midY)
-                        ctx.lineTo(w, midY)
-                        ctx.stroke()
-                        if (live) return
-                        var turns = 2.5
-                        var maxR = 6
-                        var steps = 48
-                        ctx.strokeStyle = playedCss
-                        ctx.lineWidth = 2
-                        ctx.beginPath()
-                        for (var i = 0; i <= steps; i++) {
-                          var th = (i / steps) * turns * 2 * Math.PI
-                          var rr = maxR * (i / steps)
-                          var sx = splitX + rr * Math.cos(th)
-                          var sy = midY + rr * Math.sin(th) * 0.8
-                          if (i === 0) ctx.moveTo(sx, sy)
-                          else ctx.lineTo(sx, sy)
-                        }
-                        ctx.stroke()
-                        ctx.fillStyle = playedCss
-                        ctx.beginPath()
-                        ctx.arc(splitX, midY, dotR, 0, 2 * Math.PI)
                         ctx.fill()
                         return
                       }
@@ -2773,7 +2975,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   MouseArea { id: volDown; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(-5) }
-                  InfoTip { watched: volDown; tipText: "Quieter"; delayMs: 3000 }
+                  InfoTip { watched: volDown; tipText: "Quieter"; delayMs: 1000 }
                 }
                 Text {
                   width: Style.space(30)
@@ -2794,7 +2996,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                   MouseArea { id: volUp; anchors.fill: parent; anchors.margins: -Style.space(5); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.nudgeVolume(5) }
-                  InfoTip { watched: volUp; tipText: "Louder"; delayMs: 3000 }
+                  InfoTip { watched: volUp; tipText: "Louder"; delayMs: 1000 }
                 }
               }
             }
@@ -2896,7 +3098,7 @@ Item {
             opacity: visible ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: statusHover; anchors.fill: parent; hoverEnabled: true }
-            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: 3000 }
+            InfoTip { watched: statusHover; tipText: root.notice || root.errorMessage; delayMs: 1000 }
           }
         }
 
@@ -3937,7 +4139,7 @@ Item {
                     spacing: Style.space(5)
                     height: childrenRect.height
                     Repeater {
-                      model: ["default", "wave", "lightning", "spiral", "dots", "mirror", "neon", "blocks", "gradient"]
+                      model: ["default", "lightning", "dots", "mirror", "neon", "blocks", "gradient", "ripple", "stellar"]
                     delegate: Rectangle {
                         width: 70
                         height: 38
@@ -3995,8 +4197,7 @@ Item {
                                 ctx.fill()
                                 return
                               }
-                              if (kind === "wave" || kind === "lightning") {
-                                var yf = kind === "wave" ? waveY : triY
+                              if (kind === "lightning") {
                                 var seg = function(x0, x1, style) {
                                   if (x1 <= x0) return
                                   ctx.strokeStyle = style
@@ -4005,47 +4206,122 @@ Item {
                                   ctx.lineJoin = "round"
                                   ctx.beginPath()
                                   var x = x0
-                                  ctx.moveTo(x, yf(x))
+                                  ctx.moveTo(x, triY(x))
                                   x += 2
-                                  while (x < x1) { ctx.lineTo(x, yf(x)); x += 2 }
-                                  ctx.lineTo(x1, yf(x1))
+                                  while (x < x1) { ctx.lineTo(x, triY(x)); x += 2 }
+                                  ctx.lineTo(x1, triY(x1))
                                   ctx.stroke()
                                 }
                                 seg(0, splitX, playedCss)
                                 seg(splitX, w, restCss)
                                 ctx.fillStyle = playedCss
                                 ctx.beginPath()
-                                ctx.arc(splitX, yf(splitX), 3, 0, 2 * Math.PI)
+                                ctx.arc(splitX, triY(splitX), 3, 0, 2 * Math.PI)
                                 ctx.fill()
                                 return
                               }
-                              if (kind === "spiral") {
-                                ctx.strokeStyle = restCss
-                                ctx.lineWidth = 2
-                                ctx.lineCap = "round"
-                                ctx.beginPath()
-                                ctx.moveTo(0, midY)
-                                ctx.lineTo(w, midY)
-                                ctx.stroke()
-                                var turns = 2.5
-                                var maxR = 6
-                                var steps = 32
-                                ctx.strokeStyle = playedCss
-                                ctx.lineWidth = 2
-                                ctx.beginPath()
-                                for (var i = 0; i <= steps; i++) {
-                                  var th = (i / steps) * turns * 2 * Math.PI
-                                  var rr = maxR * (i / steps)
-                                  var sx = splitX + rr * Math.cos(th)
-                                  var sy = midY + rr * Math.sin(th) * 0.8
-                                  if (i === 0) ctx.moveTo(sx, sy)
-                                  else ctx.lineTo(sx, sy)
+                              if (kind === "ripple") {
+                                var ripY = function(x) { var a = (x / waveLen) * 2 * Math.PI; return midY + 3 * Math.sin(a + phase) + 1.0 * Math.sin(2.2 * a + 1.3 + phase) }
+                                var ripHalf = function(x) { return 2 + 1.5 * (x / Math.max(1, w)) }
+                                var fillR = function(x0, x1, style, glow) {
+                                  if (x1 <= x0) return
+                                  ctx.save()
+                                  if (glow) { ctx.shadowColor = playedCss; ctx.shadowBlur = 6 }
+                                  ctx.fillStyle = style
+                                  ctx.beginPath()
+                                  var rx = x0
+                                  ctx.moveTo(rx, ripY(rx) - ripHalf(rx))
+                                  rx += 2
+                                  while (rx < x1) { ctx.lineTo(rx, ripY(rx) - ripHalf(rx)); rx += 2 }
+                                  ctx.lineTo(x1, ripY(x1) - ripHalf(x1))
+                                  rx = x1
+                                  ctx.lineTo(rx, ripY(rx) + ripHalf(rx))
+                                  rx -= 2
+                                  while (rx > x0) { ctx.lineTo(rx, ripY(rx) + ripHalf(rx)); rx -= 2 }
+                                  ctx.closePath()
+                                  ctx.fill()
+                                  ctx.restore()
                                 }
+                                fillR(0, splitX, css(root.accent, 0.85), true)
+                                fillR(splitX, w, restCss, false)
+                                ctx.fillStyle = "#ffffff"
+                                ctx.beginPath()
+                                ctx.arc(splitX, ripY(splitX), 4, 0, 2 * Math.PI)
+                                ctx.fill()
+                                return
+                              }
+                              if (kind === "stellar") {
+                                var stY = function(x) { var a = (x / waveLen) * 2 * Math.PI; return midY + 4 * Math.sin(a + phase) + 1.5 * Math.sin(2.2 * a + 1.3 + phase) }
+                                var stSeed = function(i) { var x = Math.sin(i * 12.9898 + 4.7) * 43758.5453; return x - Math.floor(x) }
+                                ctx.lineWidth = 1
+                                ctx.strokeStyle = css(root.muted, 0.25)
+                                ctx.beginPath()
+                                ctx.moveTo(0.15 * w, midY - 5 + stSeed(1) * 2)
+                                ctx.lineTo(0.45 * w, midY + 3 - stSeed(2) * 2)
+                                ctx.lineTo(0.72 * w, midY - 4 + stSeed(3) * 2)
                                 ctx.stroke()
+                                for (var spx = 5; spx < w; spx += 10) {
+                                  ctx.fillStyle = (spx <= splitX) ? playedCss : restCss
+                                  ctx.beginPath()
+                                  ctx.arc(spx, stY(spx), 1.8, 0, 2 * Math.PI)
+                                  ctx.fill()
+                                }
+                                for (var tii = 0; tii < 3; tii++) {
+                                  var ttx = (0.2 + tii * 0.3) * w
+                                  var tty = (tii % 2 === 0) ? 2.5 : (h - 2.5)
+                                  var tts = 3
+                                  var ttw = 0.35 + 0.55 * Math.abs(Math.sin(phase + tii * 2.1))
+                                  ctx.fillStyle = (tii % 2 === 0) ? "rgba(255,255,255," + ttw.toFixed(3) + ")" : css(root.accent, ttw)
+                                  ctx.beginPath()
+                                  ctx.moveTo(ttx, tty - tts)
+                                  ctx.lineTo(ttx + tts * 0.25, tty - tts * 0.25)
+                                  ctx.lineTo(ttx + tts, tty)
+                                  ctx.lineTo(ttx + tts * 0.25, tty + tts * 0.25)
+                                  ctx.lineTo(ttx, tty + tts)
+                                  ctx.lineTo(ttx - tts * 0.25, tty + tts * 0.25)
+                                  ctx.lineTo(ttx - tts, tty)
+                                  ctx.lineTo(ttx - tts * 0.25, tty - tts * 0.25)
+                                  ctx.closePath()
+                                  ctx.fill()
+                                }
+                                var ppx = splitX, ppy = stY(splitX)
+                                var ee = 2
+                                var tang = Math.atan2(stY(Math.min(w, ppx + ee)) - stY(Math.max(0, ppx - ee)), 2 * ee)
+                                ctx.save()
+                                ctx.translate(ppx, ppy)
+                                ctx.rotate(tang)
                                 ctx.fillStyle = playedCss
                                 ctx.beginPath()
-                                ctx.arc(splitX, midY, 3, 0, 2 * Math.PI)
+                                ctx.moveTo(7, 0)
+                                ctx.lineTo(2, -3)
+                                ctx.lineTo(2, 3)
+                                ctx.closePath()
                                 ctx.fill()
+                                ctx.fillRect(-5, -2.5, 7, 5)
+                                ctx.beginPath()
+                                ctx.moveTo(-5, -2.5)
+                                ctx.lineTo(-8, -5)
+                                ctx.lineTo(-5, 0)
+                                ctx.closePath()
+                                ctx.fill()
+                                ctx.beginPath()
+                                ctx.moveTo(-5, 2.5)
+                                ctx.lineTo(-8, 5)
+                                ctx.lineTo(-5, 0)
+                                ctx.closePath()
+                                ctx.fill()
+                                ctx.fillStyle = "#ffffff"
+                                ctx.beginPath()
+                                ctx.arc(-1, 0, 1.8, 0, 2 * Math.PI)
+                                ctx.fill()
+                                ctx.fillStyle = playedCss
+                                ctx.beginPath()
+                                ctx.moveTo(-5, -1.5)
+                                ctx.lineTo(-5, 1.5)
+                                ctx.lineTo(-8, 0)
+                                ctx.closePath()
+                                ctx.fill()
+                                ctx.restore()
                                 return
                               }
                               if (kind === "mirror") {
@@ -4162,6 +4438,69 @@ Item {
                             root.seekStyle = modelData
                             root.saveSetting("seekstyle", modelData)
                             root.notice = "Seekbar: " + modelData
+                            noticeTimer.restart()
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              Item {
+                width: parent.width
+                height: btnStyleCol.childrenRect.height
+                Column {
+                  id: btnStyleCol
+                  width: parent.width
+                  spacing: Style.space(4)
+                  Text {
+                    text: "Button style"
+                    textFormat: Text.PlainText
+                    color: root.ink
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                  }
+                  Row {
+                    width: parent.width
+                    spacing: Style.space(5)
+                    Repeater {
+                      model: ["classic", "glow", "soft"]
+                      delegate: Rectangle {
+                        width: 70
+                        height: 52
+                        radius: 6
+                        color: "transparent"
+                        border.width: 1
+                        border.color: root.btnStyle === modelData ? root.accent : root.muted
+                        Column {
+                          anchors.centerIn: parent
+                          spacing: 2
+                          TransportBtn {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            glyph: ">"
+                            btnSize: Style.space(24)
+                            previewStyle: modelData
+                            tip: modelData
+                            tapped: null
+                          }
+                          Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: modelData
+                            textFormat: Text.PlainText
+                            color: root.muted
+                            font.family: root.uiFont
+                            font.pixelSize: Style.font.caption
+                          }
+                        }
+                        MouseArea {
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: {
+                            root.btnStyle = modelData
+                            root.saveSetting("btnstyle", modelData)
+                            root.notice = "Buttons: " + modelData
                             noticeTimer.restart()
                           }
                         }
@@ -4620,21 +4959,32 @@ Item {
                 ctx.lineWidth = 2
                 ctx.lineCap = "round"
                 ctx.lineJoin = "round"
-                var m = fsCanvas.isFull ? 8 : 4
-                var len = 5
+                var m = 4
+                var head = 4
                 ctx.beginPath()
-                ctx.moveTo(m + len, m)
-                ctx.lineTo(m, m)
-                ctx.lineTo(m, m + len)
-                ctx.moveTo(w - m - len, m)
-                ctx.lineTo(w - m, m)
-                ctx.lineTo(w - m, m + len)
-                ctx.moveTo(m, h - m - len)
-                ctx.lineTo(m, h - m)
-                ctx.lineTo(m + len, h - m)
-                ctx.moveTo(w - m - len, h - m)
-                ctx.lineTo(w - m, h - m)
-                ctx.lineTo(w - m, h - m - len)
+                if (!fsCanvas.isFull) {
+                  ctx.moveTo(12, 10)
+                  ctx.lineTo(w - m, m)
+                  ctx.moveTo(w - m - head, m)
+                  ctx.lineTo(w - m, m)
+                  ctx.lineTo(w - m, m + head)
+                  ctx.moveTo(10, 12)
+                  ctx.lineTo(m, h - m)
+                  ctx.moveTo(m + head, h - m)
+                  ctx.lineTo(m, h - m)
+                  ctx.lineTo(m, h - m - head)
+                } else {
+                  ctx.moveTo(w - m, m)
+                  ctx.lineTo(12, 10)
+                  ctx.moveTo(12 + head, 10)
+                  ctx.lineTo(12, 10)
+                  ctx.lineTo(12, 10 - head)
+                  ctx.moveTo(m, h - m)
+                  ctx.lineTo(10, 12)
+                  ctx.moveTo(10 - head, 12)
+                  ctx.lineTo(10, 12)
+                  ctx.lineTo(10, 12 + head)
+                }
                 ctx.stroke()
               }
             }
@@ -4650,7 +5000,7 @@ Item {
                 noticeTimer.restart()
               }
             }
-            InfoTip { watched: fsHover; tipText: root.fullScreen ? "Collapse" : "Expand"; delayMs: 3000 }
+            InfoTip { watched: fsHover; tipText: root.fullScreen ? "Collapse" : "Expand"; delayMs: 1000 }
           }
           Text {
             id: creditText
@@ -4954,26 +5304,36 @@ Item {
     property string tip: ""
     property var tapped
     property int btnSize: Style.space(34)
+    property string previewStyle: ""
+    readonly property string effStyle: previewStyle !== "" ? previewStyle : ((root.btnStyle === "glow" || root.btnStyle === "soft") ? root.btnStyle : "classic")
     width: btnSize
     height: btnSize
     radius: btnSize / 2
     transformOrigin: Item.Center
     scale: btnHover.pressed ? 0.9 : (btnHover.containsMouse ? 1.07 : 1.0)
-    color: primary
-      ? (btnHover.containsMouse ? root.accent : "transparent")
-      : (btnHover.containsMouse ? root.raised : "transparent")
+    color: effStyle === "classic" ? (primary ? (btnHover.containsMouse ? root.accent : "transparent") : (btnHover.containsMouse ? root.raised : "transparent")) : (effStyle === "glow" ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, btnHover.containsMouse ? 0.28 : 0.18) : Qt.rgba(root.muted.r, root.muted.g, root.muted.b, btnHover.containsMouse ? 0.28 : 0.16))
     border.width: (primary || active) ? 2 : 1
-    border.color: primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))
+    border.color: effStyle === "classic" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))) : (effStyle === "glow" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.accent : root.muted))) : (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))))
     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
     Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Text {
+      id: btnGlyph
       anchors.centerIn: parent
       text: tbtn.glyph
-      color: (tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)
+      color: effStyle === "classic" ? ((tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)) : (effStyle === "glow" ? root.accent : (tbtn.active ? root.accent : root.ink))
       font.family: root.iconFont
       font.pixelSize: tbtn.large ? Style.font.iconLarge : Style.font.bodySmall
       Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    }
+    Glow {
+      anchors.fill: btnGlyph
+      source: btnGlyph
+      color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.65)
+      radius: 8
+      samples: 15
+      spread: 0.25
+      visible: tbtn.effStyle === "glow"
     }
     MouseArea {
       id: btnHover
@@ -4982,7 +5342,7 @@ Item {
       cursorShape: Qt.PointingHandCursor
       onClicked: if (tbtn.tapped) tbtn.tapped()
     }
-    InfoTip { watched: btnHover; tipText: tbtn.tip; delayMs: 3000 }
+    InfoTip { watched: btnHover; tipText: tbtn.tip; delayMs: 1000 }
   }
 
   component HomeRow: Rectangle {
@@ -5094,7 +5454,7 @@ Item {
             root.ytSearchAndPlay(r.artist + " " + r.title)
           }
         }
-        InfoTip { watched: ytHover; tipText: "Full version on YouTube"; delayMs: 3000 }
+        InfoTip { watched: ytHover; tipText: "Full version on YouTube"; delayMs: 1000 }
       }
     }
 
