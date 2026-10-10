@@ -182,7 +182,7 @@ BarWidget {
 
       Text {
         anchors.centerIn: parent
-        text: "󰋋"
+        text: "󰋌"
         color: root.foreground
         font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
         font.pixelSize: Style.font.iconLarge
@@ -383,7 +383,7 @@ BarWidget {
     Text {
       anchors.centerIn: parent
       visible: !root.hasTrack || root.idleHidden
-      text: String.fromCharCode(0xF02CB)
+      text: String.fromCharCode(0xF02CC)
       color: root.foreground
       font.family: root.bar ? root.bar.fontFamily : Style.font.menuFamily
       font.pixelSize: Style.font.bodySmall
