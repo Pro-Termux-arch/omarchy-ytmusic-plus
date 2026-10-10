@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.3.7 beta"
+  readonly property string appVersion: "v2.3.9 stable"
 
   property bool opened: false
   property bool searching: false
@@ -1307,6 +1307,13 @@ Item {
     saveSetting("volume", v)
     runCmd(["volume", String(v)])
   }
+  function sliderSeek(px) {
+    var v = Math.max(0, Math.min(100, Math.round(px / sliderBox.width * 100 / 5) * 5))
+    if (v === setVolume) return
+    setVolume = v
+    saveSetting("volume", v)
+    runCmd(["volume", String(v)])
+  }
 
   function cycleLoop() {
     loopMode = loopMode === "off" ? "all" : (loopMode === "all" ? "one" : "off")
@@ -2504,12 +2511,38 @@ Item {
             color: root.raised
             border.width: searchField.activeFocus ? 1 : 0
             border.color: root.ink
+            Canvas {
+              width: Style.space(21)
+              height: width
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              onPaint: {
+                var ctx = getContext("2d")
+                var w = width
+                var h = height
+                ctx.clearRect(0, 0, w, h)
+                if (w <= 0 || h <= 0) return
+                var css = "rgba(" + Math.round(root.muted.r * 255) + "," + Math.round(root.muted.g * 255) + "," + Math.round(root.muted.b * 255) + ",1)"
+                ctx.strokeStyle = css
+                ctx.lineWidth = 2
+                ctx.lineCap = "round"
+                ctx.beginPath()
+                ctx.arc(w * 0.42, h * 0.42, Math.min(w, h) * 0.26, 0, 2 * Math.PI)
+                ctx.stroke()
+                ctx.beginPath()
+                ctx.moveTo(w * 0.60, h * 0.60)
+                ctx.lineTo(w * 0.84, h * 0.84)
+                ctx.stroke()
+              }
+              Component.onCompleted: requestPaint()
+            }
             TextInput {
               id: searchField
               anchors.left: parent.left
-              anchors.leftMargin: Style.space(13)
+              anchors.leftMargin: Style.space(34)
               anchors.right: parent.right
-              anchors.rightMargin: Style.space(13)
+              anchors.rightMargin: Style.space(34)
               anchors.verticalCenter: parent.verticalCenter
               color: root.ink
               selectionColor: root.accent
@@ -2532,6 +2565,26 @@ Item {
                 font: searchField.font
                 visible: !searchField.text
               }
+              Text {
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(13)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "x"
+                color: clearHover.containsMouse ? root.accent : root.muted
+                font.family: root.uiFont
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+                visible: searchField.text !== ""
+                Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                MouseArea {
+                  id: clearHover
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(5)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: searchField.text = ""
+                }
+              }
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { searchDebounce.stop(); root.search(); event.accepted = true }
                 else if (event.key === Qt.Key_Down && tracks.count > 0) { root.selectedIndex = 0; resultList.forceActiveFocus(); event.accepted = true }
@@ -2548,10 +2601,35 @@ Item {
               height: parent.height
               radius: height / 2
               color: root.raised
+              Canvas {
+                width: Style.space(21)
+                height: width
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                onPaint: {
+                  var ctx = getContext("2d")
+                  var w = width
+                  var h = height
+                  ctx.clearRect(0, 0, w, h)
+                  if (w <= 0 || h <= 0) return
+                  var css = "rgba(" + Math.round(root.muted.r * 255) + "," + Math.round(root.muted.g * 255) + "," + Math.round(root.muted.b * 255) + ",1)"
+                  ctx.strokeStyle = css
+                  ctx.lineWidth = 2
+                  var r = Math.min(w, h) * 0.22
+                  ctx.beginPath()
+                  ctx.arc(w * 0.38, h * 0.42, r, 0, 2 * Math.PI)
+                  ctx.stroke()
+                  ctx.beginPath()
+                  ctx.arc(w * 0.62, h * 0.58, r, 0, 2 * Math.PI)
+                  ctx.stroke()
+                }
+                Component.onCompleted: requestPaint()
+              }
               TextInput {
                 id: playlistField
                 anchors.left: parent.left
-                anchors.leftMargin: Style.space(13)
+                anchors.leftMargin: Style.space(34)
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(13)
                 anchors.verticalCenter: parent.verticalCenter
@@ -2622,7 +2700,7 @@ Item {
                 width: parent.width
                 text: (root.currentDownloaded ? "↓ " : "") + root.currentArtist + " · " + root.durationLabel(root.currentDuration, root.currentIsLive)
                 textFormat: Text.PlainText
-                color: root.currentDownloaded ? root.accent : root.muted
+                color: root.accent
                 font.family: root.uiFont
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideRight
@@ -2730,13 +2808,23 @@ Item {
           }
 
         // Progress + transport
+        // Fullscreen transport card: 13 pad + 13 progress + 8 gap + 55 buttons + 13 pad = 102.
         Item {
           width: parent.width
-          height: root.currentTitle !== "" ? Style.space(55) : 0
+          height: root.currentTitle !== "" ? (root.fullScreen ? Style.space(102) : Style.space(55)) : 0
           visible: root.currentTitle !== ""
+          Rectangle {
+            anchors.fill: parent
+            visible: root.fullScreen
+            radius: Style.space(13)
+            color: "transparent"
+            border.width: 1
+            border.color: root.muted
+          }
           Column {
             anchors.fill: parent
-            spacing: Style.space(3)
+            anchors.margins: root.fullScreen ? Style.space(13) : 0
+            spacing: root.fullScreen ? Style.space(8) : Style.space(3)
             Row {
               id: timeRow
               width: parent.width
@@ -3272,6 +3360,37 @@ Item {
                   font.family: root.uiFont
                   font.pixelSize: Style.font.caption
                   anchors.verticalCenter: parent.verticalCenter
+                }
+                Item {
+                  id: sliderBox
+                  width: Style.space(55)
+                  height: Style.space(13)
+                  visible: root.fullScreen
+                  anchors.verticalCenter: parent.verticalCenter
+                  Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 2
+                    radius: 1
+                    color: root.muted
+                    opacity: 0.5
+                  }
+                  Rectangle {
+                    width: Style.space(8)
+                    height: width
+                    radius: width / 2
+                    color: root.accent
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: Math.max(0, Math.min(parent.width - width, (root.setVolume / 100) * parent.width - width / 2))
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onPressed: function(mouse) { root.sliderSeek(mouse.x) }
+                    onPositionChanged: function(mouse) { if (pressed) root.sliderSeek(mouse.x) }
+                  }
                 }
                 Text {
                   text: "+"
@@ -5931,7 +6050,10 @@ Item {
     radius: Style.space(8)
     readonly property bool rowHovered: trackArea.containsMouse || mixArea.containsMouse || saveArea.containsMouse || listArea.containsMouse || dlArea.containsMouse || nextArea.containsMouse || upArea.containsMouse || dnArea.containsMouse
     readonly property bool isCurrent: trackRow.videoId === root.currentVideoId
-    color: index === root.selectedIndex ? root.raised : (rowHovered ? root.raised : "transparent")
+    color: rowHovered ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.10) : root.raised
+    border.width: 1
+    border.color: (index === root.selectedIndex || isCurrent) ? root.accent : "transparent"
+    Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     scale: trackArea.pressed ? 0.99 : 1.0
     transformOrigin: Item.Center
     Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }

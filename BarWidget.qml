@@ -166,7 +166,7 @@ BarWidget {
   component PhonesIcon: Canvas {
     id: phCanvas
     property string mode: "note"
-    property color ink: root.foreground
+    property color ink: root.themeAccent
     width: Style.space(13)
     height: Style.space(13)
     onWidthChanged: requestPaint()
@@ -182,40 +182,30 @@ BarWidget {
       var inkCss = "rgba(" + Math.round(ink.r * 255) + "," + Math.round(ink.g * 255) + "," + Math.round(ink.b * 255) + ",1)"
       ctx.strokeStyle = inkCss
       ctx.fillStyle = inkCss
-      ctx.lineWidth = 2
+      // Double-ring play mark: accent ring + solid play triangle (pause:
+      // twin bars). Fully relative so it stays crisp at any size.
+      ctx.lineWidth = Math.max(1.2, w * 0.11)
       ctx.lineCap = "round"
+      ctx.lineJoin = "round"
+      var cx = w / 2
+      var cy = h / 2
+      var rr = Math.min(w, h) / 2 - 1
+      ctx.beginPath()
+      ctx.arc(cx, cy, rr, 0, 2 * Math.PI)
+      ctx.stroke()
       if (mode === "pause") {
-        var bw = 2.5
-        var gap = 3
-        var bh = 10
-        ctx.fillRect(w / 2 - gap / 2 - bw, (h - bh) / 2, bw, bh)
-        ctx.fillRect(w / 2 + gap / 2, (h - bh) / 2, bw, bh)
+        var bw = Math.max(1.4, w * 0.13)
+        var gap = w * 0.18
+        var bh = h * 0.5
+        ctx.fillRect(cx - gap / 2 - bw, cy - bh / 2, bw, bh)
+        ctx.fillRect(cx + gap / 2, cy - bh / 2, bw, bh)
         return
       }
-      // Eighth-note: big tilted head, thick stem, curved flag.
-      var hx = w * 0.36
-      var hy = h * 0.70
-      var hr = 4.1
-      ctx.save()
-      ctx.translate(hx, hy)
-      ctx.rotate(-0.32)
-      ctx.scale(1, 0.72)
+      var s = Math.min(w, h) * 0.30
       ctx.beginPath()
-      ctx.arc(0, 0, hr, 0, 2 * Math.PI)
-      ctx.fill()
-      ctx.restore()
-      var sx = hx + hr * 0.92
-      var topY = h * 0.13
-      ctx.lineWidth = 2.4
-      ctx.beginPath()
-      ctx.moveTo(sx, hy - 1.5)
-      ctx.lineTo(sx, topY)
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.moveTo(sx - 1.2, topY)
-      ctx.bezierCurveTo(w * 0.78, h * 0.14, w * 0.86, h * 0.30, w * 0.74, h * 0.52)
-      ctx.quadraticCurveTo(w * 0.72, h * 0.36, w * 0.62, h * 0.33)
-      ctx.lineTo(sx - 1.2, h * 0.30)
+      ctx.moveTo(cx - s * 0.55, cy - s)
+      ctx.lineTo(cx + s * 0.9, cy)
+      ctx.lineTo(cx - s * 0.55, cy + s)
       ctx.closePath()
       ctx.fill()
     }
@@ -240,7 +230,6 @@ BarWidget {
 
       PhonesIcon {
         anchors.centerIn: parent
-        ink: root.foreground
       }
     }
 
@@ -447,7 +436,6 @@ BarWidget {
     PhonesIcon {
       anchors.centerIn: parent
       visible: !root.hasTrack || root.idleHidden
-      ink: root.foreground
     }
     WaveBars {
       anchors.centerIn: parent
@@ -461,7 +449,6 @@ BarWidget {
       anchors.centerIn: parent
       visible: root.hasTrack && !root.idleHidden && !root.playing
       mode: "pause"
-      ink: root.foreground
     }
     MouseArea {
       id: compactMouse

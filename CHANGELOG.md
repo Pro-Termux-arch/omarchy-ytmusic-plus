@@ -1,13 +1,29 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **36** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable → v2.3.7 beta)
+Updates so far: **38** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable → v2.3.7 beta → v2.3.8 beta → v2.3.9 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.3.7 beta (current)
+## v2.3.9 stable (current)
+
+> Promotes the v2.3.7 + v2.3.8 betas: instant-follow hover; pill
+> crossfade + pop; fullscreen fade-through + bordered transport card
+> with volume slider; dock top/bottom setting; 14 font presets;
+> rollback snapshots + Revert button; ring/solid button styles;
+> auto shell-restart after verified updates; adaptive bar pill; live
+> tab-pane reserve; double-ring play mark; track cards; search icons.
+
+## v2.3.8 beta
+
+> Redesign pass I: double-ring play/pause bar mark; track rows as raised
+> cards with accent selection ring; accent now-playing subtitle; search
+> magnifier + clear, playlist link icons; fullscreen bordered transport
+> card (102h) with volume slider.
+
+## v2.3.7 beta
 
 > Hover back to instant-follow (v2.3.3 form, user call); pill
 > collapse/expand crossfade + pop; fullscreen fade-through; dock top/bottom

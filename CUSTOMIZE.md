@@ -133,7 +133,7 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   instant mid-download). All cache writes via `atomic_cache_put`
   (tmp+commit); merge tmps carry PID; queue-insert validates videoId + url
    scheme; jq filters use --argjson (no string interpolation).
-- v2.3.7 beta (current): tab-pane reserve is live, not magic. All 5 panes
+- v2.3.9 stable (current, via v2.3.7 + v2.3.8 betas): tab-pane reserve is live, not magic. All 5 panes
   use `parent.height - y - footerBar.height - dockBottomSlot.height -
   mainCol.spacing * (dockBottomSlot.visible ? 2 : 1)` (footer Item carries
   `id: footerBar`; the conditional covers Column gap semantics — empirically
@@ -158,6 +158,13 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   ships as beta (no tag) until approved. Collapsed icon 13px (was 18),
   mini-bars exact 13; pill resting border transparent (accent on hover).
   Button styles ring + solid; picker cells 55 so all 5 fit 377 panel.
+  v2.3.8 beta redesign I: PhonesIcon redrawn as accent double-ring play
+  triangle / pause bars (relative canvas math, 13px); TrackRow always
+  raised with accent selection ring + hover wash; now-playing subtitle
+  always accent; search magnifier canvas + clear-x, playlist link canvas
+  (margins 34); fullscreen bordered transport card 102h (13+13+8+55+13,
+  muted border, radius 13) with fullscreen-only volume slider
+  (sliderSeek mirrors nudgeVolume write path).
 
 ## 4. HOWTO: add a seekbar style (key `mystyle`)
 
