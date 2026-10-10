@@ -1,13 +1,13 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **30** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 beta)
+Updates so far: **30** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.3.1 beta
+## v2.3.1 stable (current)
 
 > Legendary pass: true shuffle icon, ripple + stellar seekbars copied
 > 1:1 (our palette), pixel logo that bursts, button themes, terminal-size
@@ -86,7 +86,7 @@ tracks these tags; tag the release commit right after pushing).
 > played + playhead dot, dim remainder), same tap-drag seeking, graceful
 > on live streams. Beta on the branch; stable channel stays v2.2.3.
 
-## v2.2.3 stable (current)
+## v2.2.3 stable
 
 > No dead pixels: the bar pill hugs its content and the footer credit
 > moves out of the way.
