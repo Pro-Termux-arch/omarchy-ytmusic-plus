@@ -1,13 +1,21 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **35** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable)
+Updates so far: **36** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable → v2.3.7 beta)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.3.6 stable (current)
+## v2.3.7 beta (current)
+
+> Hover back to instant-follow (v2.3.3 form, user call); pill
+> collapse/expand crossfade + pop; fullscreen fade-through; dock top/bottom
+> setting; 14 font presets; rollback snapshots + Revert button +
+> update-revert verb; ring/solid button styles; auto shell-restart after
+> verified manual updates; adaptive bar pill; live tab-pane reserve.
+
+## v2.3.6 stable
 
 > 100ms bar hover-intent (layout follows dwell, paint stays instant),
 > fullscreen footer fix (987x700 + in-flow dock accounting), reverse

@@ -14,6 +14,7 @@ Item {
   implicitHeight: mqText.implicitHeight
 
   readonly property bool overflowing: mqText.implicitWidth > width
+  readonly property real contentWidth: mqText.implicitWidth
   onOverflowingChanged: if (!mq.overflowing) mqText.x = 0
 
   Text {
@@ -37,7 +38,7 @@ Item {
 
     SequentialAnimation on x {
       running: mq.overflowing && mq.visible
-      paused: mq.hovered
+      paused: mq.overflowing && mq.hovered
       loops: Animation.Infinite
       PauseAnimation { duration: 1600 }
       NumberAnimation {

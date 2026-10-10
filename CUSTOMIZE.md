@@ -87,7 +87,7 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   proc): backend adds field at ALL status emissions, QML whitelists it.
   Current keys: `barmode full|compact`, `seekstyle
   default|lightning|dots|mirror|neon|blocks|gradient|ripple|stellar|comet|heartbeat`,
-  `btnstyle classic|glow|soft`, `viz on|off`, `buffer
+  `btnstyle classic|glow|soft|ring|solid`, `viz on|off`, `buffer
   saver|balanced|smooth`, `fullscreen on|off` (panel 987x610, normal
   377x610 — consecutive-Fibonacci frames via capped helpers; dock drops to
   bottom in Player).
@@ -132,7 +132,32 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   dl-get serializes on private `dl.lock` (global lock freed — status stays
   instant mid-download). All cache writes via `atomic_cache_put`
   (tmp+commit); merge tmps carry PID; queue-insert validates videoId + url
-  scheme; jq filters use --argjson (no string interpolation).
+   scheme; jq filters use --argjson (no string interpolation).
+- v2.3.7 beta (current): tab-pane reserve is live, not magic. All 5 panes
+  use `parent.height - y - footerBar.height - dockBottomSlot.height -
+  mainCol.spacing * (dockBottomSlot.visible ? 2 : 1)` (footer Item carries
+  `id: footerBar`; the conditional covers Column gap semantics — empirically
+  proven on Qt 6.11 that invisible/zero-height children consume no spacing,
+  so normal mode trails 1 gap, fullscreen 2). Bar pill is adaptive: Marquee
+  exposes `contentWidth`, title width clamps to `max(34, min(120, text+8))`;
+  VizBars exact 48 when on / 0 when off; pill chrome 10→5; poster slot
+  collapses to 0 with no thumbnail. Hover is v2.3.3 instant-follow
+  (barHover 5-term OR straight into pillFull — no dwell/poll/settle, per
+  user call); pill width 260ms OutExpo, compactBox crossfade 150 + pop 200
+  OutBack, pillRow pop 220 OutBack. Fullscreen swap: fsSwapAnim fades
+  contentWrap 0.35->1 over 220ms (onFullScreenChanged; geometry untouched).
+  dockpos top|bottom (normal mode only; fullscreen forces bottom): backend
+  DEFAULTS + set whitelist, Player dockPos + slots/dockRow follow it, reserve
+  math untouched (live refs adapt), Appearance SettingCycle. Fonts: 14
+  presets (8 new, fc-list verified) + backend font-presets parity.
+  Rollback: update-apply snapshots pre-update HEAD+version to
+  DATA_DIR/update_prev.json (both channels, success-only, atomic); new
+  update-revert verb (dirty-refuse, fetch-if-missing, reset --hard,
+  UPDATE_REVERTED contract); Settings Revert button + proc reuse the
+  one-shot shell restart. Release policy: user gates stable; all work
+  ships as beta (no tag) until approved. Collapsed icon 13px (was 18),
+  mini-bars exact 13; pill resting border transparent (accent on hover).
+  Button styles ring + solid; picker cells 55 so all 5 fit 377 panel.
 
 ## 4. HOWTO: add a seekbar style (key `mystyle`)
 

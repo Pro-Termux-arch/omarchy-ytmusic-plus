@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.3.6 stable"
+  readonly property string appVersion: "v2.3.7 beta"
 
   property bool opened: false
   property bool searching: false
@@ -87,6 +87,7 @@ Item {
   property bool updateAutoChecked: false
   property bool updateVerifyPending: false
   property bool updateManualApply: false
+  property bool updateRestartArmed: false
   property string eqPresetName: "flat"
   property var eqGainsArr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   readonly property var eqBands: ["31", "62", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"]
@@ -98,6 +99,7 @@ Item {
   // One status line shows notice || error: a fresh notice retires a stale
   // error, and a fresh error preempts the notice + stops its timer.
   onNoticeChanged: if (notice !== "") errorMessage = ""
+  onFullScreenChanged: fsSwapAnim.restart()
   onErrorMessageChanged: if (errorMessage !== "") {
     notice = ""
     noticeTimer.stop()
@@ -125,6 +127,7 @@ Item {
   property string seekStyle: "default"
   property string btnStyle: "classic"
   property string barModeSetting: "full"
+  property string dockPos: "top"
   property real wavePhase: 0
   property bool vizOn: true
   property bool fullScreen: false
@@ -1021,10 +1024,12 @@ Item {
       var sst = String(s.seekstyle || "default")
       seekStyle = (sst === "default" || sst === "lightning" || sst === "dots" || sst === "mirror" || sst === "neon" || sst === "blocks" || sst === "gradient" || sst === "ripple" || sst === "stellar" || sst === "comet" || sst === "heartbeat") ? sst : "default"
       var bst = String(s.btnstyle || s.btnStyle || "classic")
-      btnStyle = (bst === "classic" || bst === "glow" || bst === "soft") ? bst : "classic"
+      btnStyle = (bst === "classic" || bst === "glow" || bst === "soft" || bst === "ring" || bst === "solid") ? bst : "classic"
       var bms = String(s.barmode || "full")
       barModeSetting = (bms === "compact") ? "compact" : "full"
       vizOn = (s.viz === "off") ? false : true
+      var dps = String(s.dockpos || "top")
+      dockPos = (dps === "bottom") ? "bottom" : "top"
       customFontName = String(s.customFont || "")
       eqPresetName = String(s.eqPreset || "flat")
       var uch = String(s.update_channel || "beta")
@@ -1099,7 +1104,7 @@ Item {
   // Dedicated processes only (never actionProc: an apply can take minutes and
   // must never block playback/queue commands).
   function checkUpdates(manual) {
-    if (updateCheckProc.running || updateApplyProc.running) return
+    if (updateCheckProc.running || updateApplyProc.running || updateRevertProc.running) return
     updateChecking = true
     if (manual) updateStatusText = "Checking..."
     updateCheckProc.collected = ""
@@ -1163,7 +1168,7 @@ Item {
   // updateAutoChecked so the initial settings load (and opt-out) wins first.
   function maybePeriodicUpdateCheck() {
     if (!opened || !updateAutoChecked) return
-    if (updateCheckProc.running || updateApplyProc.running) return
+    if (updateCheckProc.running || updateApplyProc.running || updateRevertProc.running) return
     var now = Math.floor(Date.now() / 1000)
     if ((now - (updateLastCheck || 0)) > 1800) checkUpdates(false)
   }
@@ -1230,10 +1235,11 @@ Item {
       recordUpdateCheck()
       if (!root.uiMatchesDisk()) {
         if (root.updateManualApply) {
-          root.notice = "Reloading shell to finish update..."
+          root.notice = "Updated - reloading shell..."
           noticeTimer.restart()
-          shellRestartProc.command = ["omarchy", "restart", "shell"]
-          shellRestartProc.running = true
+          root.updateRestartArmed = true
+          root.updateManualApply = false
+          shellAutoRestartTimer.restart()
         } else {
           root.notice = "Updated - restart shell to reload v" + lv
         }
@@ -1277,11 +1283,20 @@ Item {
 
   function applyUpdate(manual) {
     root.updateManualApply = !!manual
-    if (updateApplyProc.running) return
+    if (updateApplyProc.running || updateRevertProc.running) return
     updateApplyProc.collected = ""
     updateApplyProc.command = ["bash", scriptPath, "update-apply", updateChannel]
     updateApplyProc.running = true
     notice = "Updating..."
+    noticeTimer.restart()
+  }
+  function revertUpdate() {
+    if (updateRevertProc.running || updateApplyProc.running || updateCheckProc.running) return
+    updateRevertProc.collected = ""
+    updateRevertProc.command = ["bash", scriptPath, "update-revert"]
+    updateRevertProc.running = true
+    updateStatusText = "Reverting..."
+    notice = "Reverting to snapshot..."
     noticeTimer.restart()
   }
 
@@ -1639,6 +1654,34 @@ Item {
     }
   }
 
+  // Rollback: reset to the pre-update snapshot, then reload the shell.
+  Process {
+    id: updateRevertProc
+    property string collected: ""
+    stdout: SplitParser { onRead: function(line) { updateRevertProc.collected += line + "\n" } }
+    stderr: StdioCollector { id: updateRevertError; waitForEnd: true }
+    onStarted: collected = ""
+    onExited: function(code) {
+      if (code === 0) {
+        var sha = ""
+        var outLines = String(collected || "").split("\n")
+        for (var i = 0; i < outLines.length; i++) {
+          var parts = outLines[i].trim().split(" ")
+          if (parts.length >= 2 && parts[0] === "UPDATE_REVERTED") sha = parts[1]
+        }
+        root.updateAvailable = false
+        root.updateStatusText = "Reverted (" + (sha || "snapshot") + ")"
+        root.notice = "Reverted - reloading shell..."
+        noticeTimer.restart()
+        root.updateRestartArmed = true
+        shellAutoRestartTimer.restart()
+      } else {
+        var reason = String(updateRevertError.text || "").trim().split("\n")[0] || ("exit " + code)
+        root.errorMessage = reason
+        root.updateStatusText = reason.length > 60 ? reason.slice(0, 57) + "..." : reason
+      }
+    }
+  }
   Timer {
     id: verifyTimer
     interval: 5000
@@ -1666,6 +1709,19 @@ Item {
   // Manual-update shell restart (own region near copyProc)
   Process {
     id: shellRestartProc
+  }
+  Timer {
+    id: shellAutoRestartTimer
+    interval: 1000
+    repeat: false
+    onTriggered: {
+      if (!root.updateRestartArmed) return
+      root.updateRestartArmed = false
+      if (root.uiMatchesDisk()) return
+      if (shellRestartProc.running) return
+      shellRestartProc.command = ["omarchy", "restart", "shell"]
+      shellRestartProc.running = true
+    }
   }
 
   // Font installer: stdout carries the detected family name.
@@ -2112,6 +2168,11 @@ Item {
     onTriggered: root.search()
   }
 
+  // Fullscreen swap fade-through: softens the 377<->987 reflow jump.
+  SequentialAnimation {
+    id: fsSwapAnim
+    NumberAnimation { target: contentWrap; property: "opacity"; from: 0.35; to: 1; duration: 220; easing.type: Easing.OutCubic }
+  }
   Timer {
     id: noticeTimer
     interval: 2600
@@ -2128,7 +2189,7 @@ Item {
     border.color: root.border
     clip: true
     transformOrigin: Item.Center
-    scale: root.opened ? 1 : 0.985
+    scale: root.opened ? 1 : 0.97
     opacity: root.opened ? 1 : 0
     Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
     Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -2342,16 +2403,16 @@ Item {
         Item {
           id: dockTopSlot
           width: parent.width
-          height: root.fullScreen ? 0 : Style.space(34)
-          visible: !root.fullScreen
+          height: (!root.fullScreen && root.dockPos === "top") ? Style.space(34) : 0
+          visible: !root.fullScreen && root.dockPos === "top"
         }
         Item {
           id: dockRow
-          parent: root.fullScreen ? dockBottomSlot : dockTopSlot
+          parent: (root.fullScreen || root.dockPos === "bottom") ? dockBottomSlot : dockTopSlot
           width: parent.width
           height: Style.space(34)
-          anchors.top: root.fullScreen ? parent.top : undefined
-          anchors.bottom: root.fullScreen ? parent.bottom : undefined
+          anchors.top: (root.fullScreen || root.dockPos === "bottom") ? parent.top : undefined
+          anchors.bottom: (root.fullScreen || root.dockPos === "bottom") ? parent.bottom : undefined
           readonly property int litTab: root.hoveredTab >= 0 ? root.hoveredTab : root.tabIndex
 
           Item {
@@ -3513,7 +3574,7 @@ Item {
         // Home: free, legit, keyless discovery (main - top - artist - radio - tunes)
         Item {
           width: parent.width
-          height: visible ? parent.height - y - Style.space(18) : 0
+          height: visible ? parent.height - y - footerBar.height - dockBottomSlot.height - mainCol.spacing * (dockBottomSlot.visible ? 2 : 1) : 0
           visible: root.tabIndex === 0
           opacity: visible ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -4140,7 +4201,7 @@ Item {
         ListView {
           id: resultList
           width: parent.width
-          height: visible ? parent.height - y - Style.space(18) : 0
+          height: visible ? parent.height - y - footerBar.height - dockBottomSlot.height - mainCol.spacing * (dockBottomSlot.visible ? 2 : 1) : 0
           model: tracks
           clip: true
           spacing: Style.space(3)
@@ -4166,7 +4227,7 @@ Item {
         // Lyrics view (karaoke-style, synced line glows in theme accent)
         Item {
           width: parent.width
-          height: visible ? parent.height - y - Style.space(18) : 0
+          height: visible ? parent.height - y - footerBar.height - dockBottomSlot.height - mainCol.spacing * (dockBottomSlot.visible ? 2 : 1) : 0
           visible: root.tabIndex === 6
           opacity: visible ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -4298,7 +4359,7 @@ Item {
         // Settings — quality-of-life toggles, all persisted, no login anywhere
         Item {
           width: parent.width
-          height: visible ? parent.height - y - Style.space(18) : 0
+          height: visible ? parent.height - y - footerBar.height - dockBottomSlot.height - mainCol.spacing * (dockBottomSlot.visible ? 2 : 1) : 0
           visible: root.tabIndex === 7
           opacity: visible ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -4808,9 +4869,9 @@ Item {
                     width: parent.width
                     spacing: Style.space(5)
                     Repeater {
-                      model: ["classic", "glow", "soft"]
+                      model: ["classic", "glow", "soft", "ring", "solid"]
                       delegate: Rectangle {
-                        width: 70
+                        width: 55
                         height: 52
                         radius: 6
                         color: "transparent"
@@ -4992,6 +5053,16 @@ Item {
                   picked: function(v) { root.barModeSetting = v; root.saveSetting("barmode", v) }
                 }
               }
+              SettingRow {
+                title: "Dock position"
+                desc: "Tab bar top or bottom (normal mode)"
+                control: SettingCycle {
+                  options: ["top", "bottom"]
+                  labels: ["Top", "Bottom"]
+                  current: root.dockPos
+                  picked: function(v) { root.dockPos = v; root.saveSetting("dockpos", v) }
+                }
+              }
 
               SettingRow {
                 title: "Custom font"
@@ -5062,7 +5133,7 @@ Item {
                   spacing: Style.space(5)
                   height: childrenRect.height
                   Repeater {
-                    model: ["Noto Sans", "Noto Serif", "Liberation Sans", "Liberation Serif", "JetBrains Mono", "Omarchy system"]
+                    model: ["Noto Sans", "Noto Serif", "Liberation Sans", "Liberation Serif", "JetBrains Mono", "Liberation Mono", "Noto Sans Mono", "Adwaita Sans", "Adwaita Mono", "Nimbus Sans", "Nimbus Roman", "Nimbus Mono PS", "iA Writer Mono S", "Omarchy system"]
                   delegate: Rectangle {
                     height: Style.space(21)
                     width: fontPresetLabel.width + Style.space(13)
@@ -5197,6 +5268,14 @@ Item {
                   flipped: function() { root.setUpdateAuto(!root.updateAuto) }
                 }
               }
+              SettingRow {
+                title: "Revert last update"
+                desc: "Back to the pre-update snapshot"
+                control: SettingBtn {
+                  label: "Revert"
+                  tapped: function() { root.revertUpdate() }
+                }
+              }
 
               Text {
                 width: parent.width
@@ -5213,7 +5292,7 @@ Item {
 
         Text {
           width: parent.width
-          height: visible ? parent.height - y - Style.space(18) : 0
+          height: visible ? parent.height - y - footerBar.height - dockBottomSlot.height - mainCol.spacing * (dockBottomSlot.visible ? 2 : 1) : 0
           visible: tracks.count === 0 && !root.searching && root.tabIndex !== 0 && root.tabIndex !== 6 && root.tabIndex !== 7
           textFormat: Text.PlainText
           lineHeight: 1.35
@@ -5237,8 +5316,8 @@ Item {
         Item {
           id: dockBottomSlot
           width: parent.width
-          height: root.fullScreen ? Style.space(34) : 0
-          visible: root.fullScreen
+          height: (root.fullScreen || root.dockPos === "bottom") ? Style.space(34) : 0
+          visible: root.fullScreen || root.dockPos === "bottom"
         }
         // Bottom bar: version bottom-left, credit bottom-center (kept short so
         // the two can never overlap — the v1.2 footer-collision report).
@@ -5246,6 +5325,7 @@ Item {
         // status; Update replaces status when available so the left cluster
         // never reaches the centered credit. Height stays 21.
         Item {
+          id: footerBar
           width: parent.width
           height: Style.space(21)
           Row {
@@ -5662,15 +5742,15 @@ Item {
     property var tapped
     property int btnSize: Style.space(34)
     property string previewStyle: ""
-    readonly property string effStyle: previewStyle !== "" ? previewStyle : ((root.btnStyle === "glow" || root.btnStyle === "soft") ? root.btnStyle : "classic")
+    readonly property string effStyle: previewStyle !== "" ? previewStyle : ((root.btnStyle === "glow" || root.btnStyle === "soft" || root.btnStyle === "ring" || root.btnStyle === "solid") ? root.btnStyle : "classic")
     width: btnSize
     height: btnSize
     radius: btnSize / 2
     transformOrigin: Item.Center
     scale: btnHover.pressed ? 0.9 : (btnHover.containsMouse ? 1.07 : 1.0)
-    color: effStyle === "classic" ? (primary ? (btnHover.containsMouse ? root.accent : "transparent") : (btnHover.containsMouse ? root.raised : "transparent")) : (effStyle === "glow" ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, btnHover.containsMouse ? 0.28 : 0.18) : Qt.rgba(root.muted.r, root.muted.g, root.muted.b, btnHover.containsMouse ? 0.28 : 0.16))
+    color: effStyle === "classic" ? (primary ? (btnHover.containsMouse ? root.accent : "transparent") : (btnHover.containsMouse ? root.raised : "transparent")) : (effStyle === "glow" ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, btnHover.containsMouse ? 0.28 : 0.18) : (effStyle === "soft" ? Qt.rgba(root.muted.r, root.muted.g, root.muted.b, btnHover.containsMouse ? 0.28 : 0.16) : (effStyle === "ring" ? "transparent" : Qt.rgba(root.accent.r, root.accent.g, root.accent.b, btnHover.containsMouse ? 1.0 : 0.92))))
     border.width: (primary || active) ? 2 : 1
-    border.color: effStyle === "classic" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))) : (effStyle === "glow" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.accent : root.muted))) : (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))))
+    border.color: effStyle === "classic" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))) : (effStyle === "glow" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.accent : root.muted))) : (effStyle === "soft" ? (primary ? root.accent : (active ? root.accent : (btnHover.containsMouse ? root.ink : root.muted))) : (effStyle === "ring" ? ((primary || active || btnHover.containsMouse) ? root.accent : root.muted) : root.accent)))
     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
     Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -5678,10 +5758,20 @@ Item {
       id: btnGlyph
       anchors.centerIn: parent
       text: tbtn.glyph
-      color: effStyle === "classic" ? ((tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)) : (effStyle === "glow" ? root.accent : (tbtn.active ? root.accent : root.ink))
+      color: effStyle === "classic" ? ((tbtn.primary && btnHover.containsMouse) ? root.onAccent : (tbtn.active ? root.accent : root.ink)) : (effStyle === "glow" ? root.accent : (effStyle === "soft" ? (tbtn.active ? root.accent : root.ink) : (effStyle === "ring" ? (tbtn.active ? root.accent : root.ink) : root.onAccent)))
       font.family: root.iconFont
       font.pixelSize: tbtn.large ? Style.font.iconLarge : Style.font.bodySmall
       Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    }
+    Rectangle {
+      anchors.fill: parent
+      anchors.margins: Style.space(3)
+      radius: height / 2
+      color: "transparent"
+      border.width: 1
+      border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, (tbtn.primary || tbtn.active || btnHover.containsMouse) ? 0.9 : 0.0)
+      visible: tbtn.effStyle === "ring"
+      Behavior on border.color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
     Glow {
       anchors.fill: btnGlyph

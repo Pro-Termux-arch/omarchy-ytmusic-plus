@@ -69,7 +69,7 @@ commit() {
 # (including 450ms status polls), so it must NEVER rewrite the file when all
 # keys are present — an unconditional rewrite raced with `set` and silently
 # reverted the user's change within a second (the "settings don't stick" bug).
-SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta","barmode":"full","seekstyle":"default","btnstyle":"classic","buffer":"balanced","viz":"on","fullscreen":"off","barexpand":"on"}'
+SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta","barmode":"full","seekstyle":"default","btnstyle":"classic","buffer":"balanced","viz":"on","fullscreen":"off","barexpand":"on","dockpos":"top"}'
 if [[ -e "$SETTINGS_FILE" ]]; then
   if ! jq -e --argjson d "$SETTINGS_DEFAULTS" '($d | keys_unsorted) - (keys_unsorted) | length == 0' "$SETTINGS_FILE" >/dev/null 2>&1; then
     tmp_s="$RUNTIME_DIR/settings.merge.tmp"
@@ -1338,6 +1338,14 @@ case "${1:-}" in
     _fp_try "Liberation Sans" "Liberation Sans"
     _fp_try "Liberation Serif" "Liberation Serif"
     _fp_try "JetBrains Mono" "JetBrains Mono" "JetBrainsMono Nerd Font"
+    _fp_try "Liberation Mono" "Liberation Mono"
+    _fp_try "Noto Sans Mono" "Noto Sans Mono"
+    _fp_try "Adwaita Sans" "Adwaita Sans"
+    _fp_try "Adwaita Mono" "Adwaita Mono"
+    _fp_try "Nimbus Sans" "Nimbus Sans"
+    _fp_try "Nimbus Roman" "Nimbus Roman"
+    _fp_try "Nimbus Mono PS" "Nimbus Mono PS"
+    _fp_try "iA Writer Mono S" "iA Writer Mono S"
     _fp_sys_tmp="$(jq -c --arg l "Omarchy system" --arg f "" '. + [{label:$l,family:$f}]' <<<"$_fp_json" 2>/dev/null || true)"
     if [[ -n "${_fp_sys_tmp:-}" ]]; then _fp_json="$_fp_sys_tmp"; else _fp_json='[{"label":"Omarchy system","family":""}]'; fi
     printf '%s\n' "$_fp_json"
@@ -1376,10 +1384,12 @@ case "${1:-}" in
         [[ "$val" == stable || "$val" == beta ]] || { printf 'update_channel must be stable|beta\n' >&2; exit 2; } ;;
       barmode)
         [[ "$val" == full || "$val" == compact ]] || { printf 'barmode must be full|compact\n' >&2; exit 2; } ;;
+      dockpos)
+        [[ "$val" == top || "$val" == bottom ]] || { printf 'dockpos must be top|bottom\n' >&2; exit 2; } ;;
       seekstyle)
         [[ "$val" == default || "$val" == lightning || "$val" == dots || "$val" == mirror || "$val" == neon || "$val" == blocks || "$val" == gradient || "$val" == ripple || "$val" == stellar || "$val" == comet || "$val" == heartbeat ]] || { printf 'seekstyle must be default|lightning|dots|mirror|neon|blocks|gradient|ripple|stellar|comet|heartbeat\n' >&2; exit 2; } ;;
       btnstyle)
-        [[ "$val" == classic || "$val" == glow || "$val" == soft ]] || { printf 'btnstyle must be classic|glow|soft\n' >&2; exit 2; } ;;
+        [[ "$val" == classic || "$val" == glow || "$val" == soft || "$val" == ring || "$val" == solid ]] || { printf 'btnstyle must be classic|glow|soft|ring|solid\n' >&2; exit 2; } ;;
       buffer)
         [[ "$val" == saver || "$val" == balanced || "$val" == smooth ]] || { printf 'buffer must be saver|balanced|smooth\n' >&2; exit 2; } ;;
       viz)
@@ -2639,6 +2649,9 @@ case "${1:-}" in
       if [[ -d "$plugindir/.git" ]]; then
         update_stash_if_dirty "$plugindir" beta
       fi
+      prev_sha="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
+      [[ "$prev_sha" =~ ^[0-9a-f]{40}$ ]] || prev_sha=""
+      prev_version="$(update_manifest_version "$plugindir")"
       if command -v timeout >/dev/null 2>&1; then
         upd_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_LONG" omarchy plugin update local.ytmusic-plus --yes)
       else
@@ -2683,6 +2696,15 @@ case "${1:-}" in
         "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
       fi
       update_restore_stash "$plugindir"
+      if [[ -n "$prev_sha" ]] && command -v jq >/dev/null 2>&1; then
+        prev_tmp="$DATA_DIR/update_prev.json.tmp"
+        prev_epoch="$(date +%s 2>/dev/null || printf '0')"
+        if jq -c -n --arg sha "$prev_sha" --arg ver "$prev_version" --arg tgt "-" --arg ch "beta" --argjson at "${prev_epoch:-0}" '{sha:$sha,version:$ver,target:$tgt,channel:$ch,at:$at}' >"$prev_tmp" 2>/dev/null && [[ -s "$prev_tmp" ]]; then
+          mv -- "$prev_tmp" "$DATA_DIR/update_prev.json"
+        else
+          rm -f -- "$prev_tmp"
+        fi
+      fi
       new_full="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
       if [[ "$new_full" =~ ^[0-9a-f]{40}$ ]]; then new_short="${new_full:0:7}"; else new_short="unknown"; fi
       printf 'UPDATE_APPLIED %s\n' "$new_short"
@@ -2720,6 +2742,9 @@ case "${1:-}" in
     fi
     # Dirty work never blocks nor is lost: stash tracked changes, reset on a
     # clean-or-stashed tree, then pop the stash back best-effort.
+    prev_sha="$(git -C "$plugindir" rev-parse HEAD 2>/dev/null || true)"
+    [[ "$prev_sha" =~ ^[0-9a-f]{40}$ ]] || prev_sha=""
+    prev_version="$(update_manifest_version "$plugindir")"
     update_stash_if_dirty "$plugindir" stable
     reset_cmd=(git -C "$plugindir" reset --hard "$target_sha")
     if ! "${reset_cmd[@]}"; then
@@ -2740,10 +2765,78 @@ case "${1:-}" in
       "${rescan_cmd[@]}" || printf 'update-apply: rescanPlugins failed (update still applied)\n' >&2
     fi
     update_restore_stash "$plugindir"
+      if [[ -n "$prev_sha" ]] && command -v jq >/dev/null 2>&1; then
+        prev_tmp="$DATA_DIR/update_prev.json.tmp"
+        prev_epoch="$(date +%s 2>/dev/null || printf '0')"
+        if jq -c -n --arg sha "$prev_sha" --arg ver "$prev_version" --arg tgt "$stable_tag" --arg ch "stable" --argjson at "${prev_epoch:-0}" '{sha:$sha,version:$ver,target:$tgt,channel:$ch,at:$at}' >"$prev_tmp" 2>/dev/null && [[ -s "$prev_tmp" ]]; then
+          mv -- "$prev_tmp" "$DATA_DIR/update_prev.json"
+        else
+          rm -f -- "$prev_tmp"
+        fi
+      fi
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
+  update-revert)
+    # update-revert: roll back to the pre-update snapshot saved by
+    # update-apply (DATA_DIR/update_prev.json). Refuses dirty trees (commit
+    # or stash first), fetches the snapshot SHA when the object is missing
+    # locally, then reset --hard (stays on branch), rescan, done.
+    # Never touches queue/state/mpv; never deletes anything.
+    # Prints UPDATE_REVERTED <short> on success; first stderr line on error.
+    plugindir="$(update_plugin_dir)"
+    if [[ -d "$plugindir/.git" ]]; then
+      origin_rc=0
+      update_origin_url "$plugindir" >/dev/null || origin_rc=$?
+      if (( origin_rc == 1 )); then
+        printf 'refusing update-revert: origin is not %s (anti-hijack)\n' "$UPDATE_UPSTREAM" >&2
+        exit 2
+      fi
+    fi
+    if [[ ! -d "$plugindir/.git" ]]; then
+      printf 'update-revert: not a git checkout - update via: omarchy plugin update local.ytmusic-plus\n' >&2
+      exit 1
+    fi
+    command -v git >/dev/null 2>&1 || { printf 'update-revert: git not found\n' >&2; exit 1; }
+    prev_file="$DATA_DIR/update_prev.json"
+    prev_sha="$(jq -r '.sha // empty' "$prev_file" 2>/dev/null || true)"
+    [[ "$prev_sha" =~ ^[0-9a-f]{40}$ ]] || prev_sha=""
+    if [[ -z "$prev_sha" ]]; then
+      printf 'update-revert: no previous update to revert (no snapshot)\n' >&2
+      exit 1
+    fi
+    _porc_cmd=(git -C "$plugindir" status --porcelain)
+    if [[ -n "$("${_porc_cmd[@]}" 2>/dev/null || true)" ]]; then
+      printf 'update-revert: working tree dirty - commit or stash first (refusing to revert)\n' >&2
+      exit 2
+    fi
+    if ! git -C "$plugindir" cat-file -e "${prev_sha}^{commit}" 2>/dev/null; then
+      if command -v timeout >/dev/null 2>&1; then
+        fetch_sha_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" git -C "$plugindir" fetch origin "$prev_sha")
+      else
+        fetch_sha_cmd=(git -C "$plugindir" fetch origin "$prev_sha")
+      fi
+      if ! "${fetch_sha_cmd[@]}" 2>/dev/null || ! git -C "$plugindir" cat-file -e "${prev_sha}^{commit}" 2>/dev/null; then
+        printf 'update-revert: cannot fetch %s (offline?)\n' "${prev_sha:0:7}" >&2
+        exit 1
+      fi
+    fi
+    reset_cmd=(git -C "$plugindir" reset --hard "$prev_sha")
+    if ! "${reset_cmd[@]}"; then
+      printf 'update-revert: git reset --hard %s failed\n' "${prev_sha:0:7}" >&2
+      exit 1
+    fi
+    if command -v omarchy-shell >/dev/null 2>&1; then
+      if command -v timeout >/dev/null 2>&1; then
+        rescan_cmd=(timeout -s TERM "$UPDATE_TIMEOUT_SHORT" omarchy-shell shell rescanPlugins)
+      else
+        rescan_cmd=(omarchy-shell shell rescanPlugins)
+      fi
+      "${rescan_cmd[@]}" || printf 'update-revert: rescanPlugins failed (revert still applied)\n' >&2
+    fi
+    printf 'UPDATE_REVERTED %s\n' "${prev_sha:0:7}"
+    ;;
   *)
-    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-insert JSON POS|queue-move FROM TO|queue-reverse|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-presets|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|mixtape [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-find QUERY|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|viz-test>\n' >&2
+    printf 'Usage: ytmusic-plus <search QUERY|mix VIDEO_ID|playlist URL [LIMIT]|resolve VIDEO_ID|queue JSON INDEX|requeue JSON INDEX [SEED]|play URL [TITLE ARTIST THUMB DUR]|next|previous|toggle|pause|resume|seek SEC|volume 0-100|stop|status|lib-save|lib-unsave|lib-list|lib-check|pl-create|pl-list|pl-show|pl-add|pl-remove|pl-delete|pl-play|dl-get|dl-list|dl-check|dl-remove|lyrics ARTIST TITLE [DURATION]|settings|set KEY VALUE|loop [off|all|one|toggle]|shuffle|queue-insert JSON POS|queue-move FROM TO|queue-reverse|queue-show|queue-clear|song-link|sleep MIN|song|off|seek-to SEC|offset-get VID|offset-nudge VID DELTA|offset-reset VID|font-install FILE|font-presets|font-reset|charts [REGION] [refresh]|tunes QUERY|radio TAG|taste-log VID TITLE ARTIST|taste-profile|foryou [refresh]|mixtape [refresh]|artist-follow NAME [ART]|artist-unfollow NAME|artist-list|artist-check NAME|artist-find QUERY|artist-songs NAME|artist-profile NAME|cache-clear|update-check [stable|beta]|update-apply [stable|beta]|update-revert|viz-test>\n' >&2
     exit 2
     ;;
 esac

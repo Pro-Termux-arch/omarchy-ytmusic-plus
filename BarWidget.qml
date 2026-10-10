@@ -44,25 +44,12 @@ BarWidget {
   property bool barExpand: true
   property bool fullScreen: false
   property bool vizOn: true
-  readonly property bool barHover: pillHover.containsMouse || bodyMouse.containsMouse || compactMouse.containsMouse || bodyMouse.pressed || compactMouse.pressed || prevMouse.pressed || playMouse.pressed || nextMouse.pressed || posterHover.pressed
-  property bool hoverIntent: false // hover intent (100ms dwell): layout follows this, instant paint follows barHover
-  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.hoverIntent)
-  Timer {
-    id: hoverIntentTimer
-    interval: 100
-    repeat: false
-    onTriggered: {
-      if (root.barHover) root.hoverIntent = true
-    }
-  }
-  onBarHoverChanged: {
-    if (root.barHover) hoverIntentTimer.restart()
-    else { hoverIntentTimer.stop(); root.hoverIntent = false }
-  }
+  readonly property bool barHover: pillHover.containsMouse || bodyMouse.containsMouse || compactMouse.containsMouse || bodyMouse.pressed || compactMouse.pressed
+  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.barHover)
 
-  implicitWidth: root.pillFull ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(10)) : (typeof barSize !== "undefined" ? barSize : Style.space(30))
+  implicitWidth: root.pillFull ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(5)) : (typeof barSize !== "undefined" ? barSize : Style.space(30))
   implicitHeight: barSize
-  Behavior on implicitWidth { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+  Behavior on implicitWidth { NumberAnimation { duration: 260; easing.type: Easing.OutExpo } }
 
   function applyViz(line) {
     var s = String(line || "")
@@ -152,7 +139,7 @@ BarWidget {
     color: root.hasTrack ? root.themeBarBackground : "transparent"
     border.width: root.hasTrack ? 1 : 0
     Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
-    border.color: pillHover.containsMouse ? root.themeAccent : root.themePopupsBorder
+    border.color: pillHover.containsMouse ? root.themeAccent : "transparent"
     scale: bodyMouse.pressed ? 0.97 : 1.0
     transformOrigin: Item.Center
     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
@@ -180,8 +167,8 @@ BarWidget {
     id: phCanvas
     property string mode: "note"
     property color ink: root.foreground
-    width: Style.space(18)
-    height: Style.space(18)
+    width: Style.space(13)
+    height: Style.space(13)
     onWidthChanged: requestPaint()
     onModeChanged: requestPaint()
     onInkChanged: requestPaint()
@@ -269,11 +256,14 @@ BarWidget {
       spacing: Style.space(3)
       visible: root.pillFull
       opacity: root.pillFull ? 1 : 0
+      scale: root.pillFull ? 1 : 0.96
+      transformOrigin: Item.Center
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+      Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
 
       Rectangle {
         id: posterBox
-        width: parent.height
+        width: root.thumbnail !== "" ? parent.height : 0
         height: parent.height
         radius: Style.space(6)
         topLeftRadius: Style.space(6)
@@ -302,7 +292,8 @@ BarWidget {
       }
 
       Marquee {
-        width: Style.space(120)
+        id: mqTitle
+        width: Math.max(Style.space(34), Math.min(Style.space(120), mqTitle.contentWidth + Style.space(8)))
         anchors.verticalCenter: parent.verticalCenter
         text: root.title
         textColor: root.foreground
@@ -318,7 +309,7 @@ BarWidget {
 
       VizBars {
         visible: root.vizOn
-        width: Style.space(64)
+        width: root.vizOn ? Style.space(48) : 0
         anchors.verticalCenter: parent.verticalCenter
         levels: root.vizLevels
         barColor: root.themeAccent
@@ -442,6 +433,11 @@ BarWidget {
     id: compactBox
     anchors.fill: parent
     visible: root.barMode === "compact" || (root.barMode !== "compact" && root.barExpand && !root.pillFull)
+    opacity: (root.barMode === "compact" || (root.barMode !== "compact" && root.barExpand && !root.pillFull)) ? 1 : 0
+    scale: (root.barMode === "compact" || (root.barMode !== "compact" && root.barExpand && !root.pillFull)) ? 1 : 0.9
+    transformOrigin: Item.Center
+    Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutBack } }
     Rectangle {
       anchors.fill: parent
       color: root.themeAccent
@@ -457,7 +453,7 @@ BarWidget {
       anchors.centerIn: parent
       visible: root.hasTrack && !root.idleHidden && root.playing
       bars: 3
-      width: Style.space(18)
+      width: Style.space(13)
       barColor: root.themeAccent
       active: true
     }
@@ -496,8 +492,9 @@ BarWidget {
       opacity: root.popupOpen ? 1 : 0
       scale: root.popupOpen ? 1 : 0.96
       transformOrigin: Item.Center
-      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-      Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
+      transform: Translate { id: popupRise; y: root.popupOpen ? 0 : Style.space(6); Behavior on y { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } } }
+      Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+      Behavior on scale { NumberAnimation { duration: 240; easing.type: Easing.OutBack } }
       onLoaded: {
         item.closeCallback = function() { root.close("closeCallback") }
       }

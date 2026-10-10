@@ -1,1 +1,1 @@
-v2.3.6 stable
+v2.3.7 beta
