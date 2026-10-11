@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.4.1 stable"
+  readonly property string appVersion: "v2.4.2 stable se"
 
   property bool opened: false
   property bool searching: false
@@ -450,8 +450,7 @@ Item {
   }
 
   function showQueue() {
-    listMode = "queue"
-    listTitle = "Up next"
+    loadQueueView()
   }
 
   // ---- generic TSV loading --------------------------------------------------
@@ -488,6 +487,7 @@ Item {
   }
 
   function search() {
+    if (root.tabIndex !== 1) return
     var query = searchField.text.trim()
     if (!query) return
     listMode = "search"
@@ -841,9 +841,8 @@ Item {
     playerRunning = true
     checkCurrentFlags()
     if (tabIndex === 6) maybeLoadLyrics()
-    var command = ["bash", scriptPath, "queue", queueJson(), String(index)]
-    if (actionProc.running) actionProc.pendingCommand = command
-    else { actionProc.command = command; actionProc.running = true }
+    actionProc.pendingQueue.push({ command: ["bash", scriptPath, "queue", queueJson(), String(index)], after: "" })
+    root.pumpQueue()
   }
 
   // Picking a SEARCH result turns into a mix (like YouTube Music's autoplay
@@ -942,9 +941,14 @@ Item {
   // ---- saves / playlists / downloads ----------------------------------------
   function runCmd(args, after) {
     var command = ["bash", scriptPath].concat(args)
-    if (after) actionProc.after = after
-    if (actionProc.running) { actionProc.pendingCommand = command; return }
-    actionProc.command = command
+    actionProc.pendingQueue.push({ command: command, after: after || "" })
+    root.pumpQueue()
+  }
+  function pumpQueue() {
+    if (actionProc.running || actionProc.pendingQueue.length === 0) return
+    var queued = actionProc.pendingQueue.shift()
+    actionProc.after = queued.after
+    actionProc.command = queued.command
     actionProc.running = true
   }
 
@@ -1206,7 +1210,7 @@ Item {
       updateAvailable = false
       if (noGit) updateStatusText = "Not a git checkout - update via omarchy plugin update"
       else updateStatusText = "Check failed"
-      recordUpdateCheck()
+      updateLastCheck = 0
       root.updateVerifyPending = false
       root.updateManualApply = false
       return
@@ -1225,7 +1229,7 @@ Item {
     if (avail !== "yes" && avail !== "no" && avail !== "unknown") {
       updateAvailable = false
       updateStatusText = "Check failed"
-      recordUpdateCheck()
+      updateLastCheck = 0
       root.updateVerifyPending = false
       root.updateManualApply = false
       return
@@ -1233,7 +1237,7 @@ Item {
     if ((avail === "yes" || avail === "no") && (ls === "" || ls === "unknown" || rs === "" || rs === "unknown" || lv === "")) {
       updateAvailable = false
       updateStatusText = "Check failed"
-      recordUpdateCheck()
+      updateLastCheck = 0
       root.updateVerifyPending = false
       root.updateManualApply = false
       return
@@ -1300,8 +1304,8 @@ Item {
   }
 
   function applyUpdate(manual) {
-    root.updateManualApply = !!manual
     if (updateApplyProc.running || updateRevertProc.running) return
+    root.updateManualApply = !!manual
     updateApplyProc.collected = ""
     updateApplyProc.command = ["bash", scriptPath, "update-apply", updateChannel]
     updateApplyProc.running = true
@@ -1339,10 +1343,7 @@ Item {
   }
 
   function shuffleQueue() {
-    if (actionProc.running) return
-    actionProc.after = "reload-queue"
-    actionProc.command = ["bash", scriptPath, "shuffle"]
-    actionProc.running = true
+    runCmd(["shuffle"], "reload-queue")
     notice = "Shuffled upcoming"
     noticeTimer.restart()
   }
@@ -1435,9 +1436,13 @@ Item {
       sleepMode = String(status.sleepMode || "")
       if (tabIndex === 6) updateLyricIndex()
       if (status.title) currentTitle = sanitizeText(status.title)
+      else currentTitle = ""
       if (status.artist) currentArtist = sanitizeText(status.artist)
+      else currentArtist = ""
       if (status.thumbnail && isSafeImageUrl(status.thumbnail)) currentThumbnail = String(status.thumbnail)
+      else currentThumbnail = ""
       if (status.duration) currentDuration = sanitizeText(status.duration)
+      else currentDuration = ""
       var incomingId = String(status.videoId || "")
       if (isVideoId(incomingId)) {
         if (currentVideoId !== incomingId) {
@@ -1454,7 +1459,7 @@ Item {
       if (status.isLive !== undefined) currentIsLive = status.isLive === true
       if (status.index !== undefined) {
         var sIdx = Number(status.index)
-        if (isFinite(sIdx)) currentIndex = Math.max(-1, Math.floor(sIdx))
+        if (isFinite(sIdx)) currentIndex = Math.max(-1, Math.min(tracks.count - 1, Math.floor(sIdx)))
       }
       if (status.queue && status.queue.length > 0 && tracks.count === 0 && !searching && listMode === "queue") {
         for (var i = 0; i < status.queue.length; i++) {
@@ -1565,7 +1570,7 @@ Item {
 
   Process {
     id: actionProc
-    property var pendingCommand: null
+    property var pendingQueue: []
     property string after: ""
     stdout: StdioCollector { id: actionOut; waitForEnd: true }
     stderr: StdioCollector { id: actionErr; waitForEnd: true }
@@ -1573,21 +1578,16 @@ Item {
       if (code !== 0 && actionErr.text.trim()) {
         errorMessage = actionErr.text.trim().split("\n")[0]
       }
-      if (pendingCommand) {
-        command = pendingCommand
-        pendingCommand = null
-        running = true
-      } else {
-        var next = after
-        after = ""
-        refreshStatus()
-        refreshMeta()
-        if (next === "reload-queue" && root.tabIndex === 2) root.loadQueueView()
-        if (root.settingsDirty) {
-          root.settingsDirty = false
-          root.loadSettings()
-        }
+      var next = after
+      after = ""
+      refreshStatus()
+      refreshMeta()
+      if (next === "reload-queue") root.loadQueueView()
+      if (root.settingsDirty) {
+        root.settingsDirty = false
+        root.loadSettings()
       }
+      root.pumpQueue()
     }
   }
 
@@ -1670,7 +1670,7 @@ Item {
         root.updateVerifyPending = true
         root.notice = root.updateManualApply ? ("Updated to " + (sha || "latest") + " - verifying reload...") : ("Updated to " + (sha || "latest"))
         noticeTimer.restart()
-        if (root.updateManualApply) verifyTimer.restart()
+        verifyTimer.restart()
       } else {
         var reason = String(updateApplyError.text || "").trim().split("\n")[0] || ("exit " + code)
         root.errorMessage = reason
@@ -2573,6 +2573,7 @@ Item {
                 if (!root.opened) return
                 if (!query || query.length < 2) {
                   searchDebounce.stop()
+                  tracks.clear()
                 } else {
                   searchDebounce.restart()
                 }
@@ -3623,7 +3624,7 @@ Item {
               }
               Timer {
                 id: delArmTimer
-                interval: 3000
+                interval: 2500
                 repeat: false
                 onTriggered: { root.deleteArmed = "" }
               }

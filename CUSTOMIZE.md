@@ -177,6 +177,14 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   self-heal with timestamped backup; lib/dl/pl reads fall back empty;
   pl-create via tmp+commit; tunes prunes; font tools under timeout 15;
   thumbs sanitized to https-or-empty.
+  Audit batch (Player): runCmd is a real FIFO (pendingQueue of
+  {command,after} + pumpQueue; playAt/shuffle join it, after runs per
+  item, queue reload unconditioned); Queue tab loads via loadQueueView
+  (no stale relabel); debounced search bails off-tab + short query
+  clears rows; Now Playing always mirrors backend (no ghost);
+  updateManualApply arms only on start; failed checks set
+  updateLastCheck=0 (no 30-min blackout); verify runs after every
+  apply; currentIndex clamped; delArm 2500 fits the notice window.
 
 ## 4. HOWTO: add a seekbar style (key `mystyle`)
 
