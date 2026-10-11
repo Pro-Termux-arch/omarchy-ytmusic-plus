@@ -1,11 +1,66 @@
+<div align="center">
+
 # YTMusic Plus for Omarchy
 
-Privacy-first, login-free YouTube music player for the Omarchy bar.
+**Privacy-first, login-free YouTube music player for the Omarchy bar.**
+*Search · Mix · Playlists · Downloads · Synced lyrics — no account, no cookies, no telemetry.*
+*Every surface follows your Omarchy theme.*
+
+<img src="assets/desktop-playlist.png" width="800" alt="YTMusic Plus fullscreen player">
+
+```sh
+omarchy plugin add https://github.com/Pro-Termux-arch/omarchy-ytmusic-plus.git --enable
+```
+
+</div>
+
+## Showcase
+
+| Find | Home |
+|---|---|
+| <img src="assets/desktop-find.png" width="400" alt="Find tab"> | <img src="assets/desktop-home.png" width="400" alt="Home tab"> |
+
+| Results | Favourite |
+|---|---|
+| <img src="assets/desktop-results.png" width="400" alt="Search results"> | <img src="assets/player-favourite.png" width="260" alt="Favourite tracks"> |
+
+| Home | Find | Queue |
+|---|---|---|
+| <img src="assets/mobile-home.png" width="260" alt="Home on the standard panel"> | <img src="assets/mobile-find.png" width="260" alt="Find on the standard panel"> | <img src="assets/mobile-queue.png" width="260" alt="Queue on the standard panel"> |
+
+## Quick start
+
+1. Click the bar icon (or press `Super + Ctrl + Shift + M`) to open the player.
+2. Go to **Find**, type 2+ letters, hit Enter — hover any result and press
+   play. Your pick builds a mix station automatically.
+
+## Guided tour
+
+| Tab | What you get |
+|---|---|
+| **Home** | Free discovery: charts, radio, new tunes. Segments (Main / Top charts / Artist), refresh button, per-row play + full-YouTube-version buttons. |
+| **Find** | YouTube search with debounced input, clear button, and mix-on-select. |
+| **Queue** | Up next: reorder (`^`/`v`), play-next (`>\|`), reverse, shuffle. |
+| **Playlist** | Import public YouTube playlists (URL or id), create local lists, open/play/mixtape, two-tap delete, per-track remove. |
+| **Favourite** | One-key save/unsave (♥) across every tab. |
+| **Local** | Offline Opus downloads — play with zero network. |
+| **Lyrics** | Version-matched synced lyrics via lrclib: the active line glows in your accent, tap any line to seek, ± nudge remembered per song. |
+| **Settings** | Playback, appearance (bar mode, seekbar + button styles, dock position, fonts), sleep timer, updates, revert. |
+
+## Bar pill
+
+The bar shows a compact icon (mini spectrum while playing). Hover 100 ms and
+it expands into the full pill: poster, scrolling title, live spectrum,
+previous / play / next. Moving across the buttons never collapses it;
+leaving collapses it a beat later. `barmode`, bar-expand, and visualizer
+are all tunable in Settings → Appearance.
+
+## Features in brief
 
 - **Search** YouTube (songs, artists, albums) — no Google account, no cookies
 - **Mix**: endless station from any track (YouTube Music-style "start radio")
 - **Playlist**: import public YouTube playlists (URL or id) + local playlists
-  (create, add, open, play) stored as JSON under `~/.local/share`
+  (create, add, open, play, delete) stored as JSON under `~/.local/share`
 - **Favourite** (♥ library) with one-key save/unsave
 - **Downloads**: offline Opus cache in `~/Music/ytmusic-plus/`; downloaded
   tracks play locally with zero network, and the resolver prefers them
@@ -15,10 +70,10 @@ Privacy-first, login-free YouTube music player for the Omarchy bar.
   nudges are remembered, and tapping a line seeks to it
 - **Loop & shuffle**: repeat off → all → one, plus shuffle-upcoming that
   keeps history and the playing song intact
-- **Settings tab ( dock)**: skip-silence trim, volume normalization,
+- **Settings tab (dock gear)**: skip-silence trim, volume normalization,
   startup volume, lyric offset default, autoplay-mix, search count, download
-  quality, sleep timer (15/30/45/60 min or end-of-song), cache clearing —
-  all persisted locally
+  quality, sleep timer (15/30/45/60 min or end-of-song), dock position,
+  14 font presets + custom font files, cache clearing — all persisted locally
 - **Fallbacks**: search tries `yt-dlp → Invidious → Piped`; playback tries
   `local file → cached stream URL → yt-dlp (android client → web client)`;
   unplayable tracks auto-skip (capped, so a bad queue stops instead of racing)
@@ -27,7 +82,7 @@ Privacy-first, login-free YouTube music player for the Omarchy bar.
 - **Themed**: every surface uses `Color.*` / `Style.*` tokens — theme switches
   repaint the player, nothing is hardcoded
 
-## Updates
+## Updates & rollback
 
 The Settings tab (dock gear) has an **Updates** group. It compares git SHAs —
 not version strings — so a phantom `v1.7.1` can never confuse it again: the
@@ -40,6 +95,11 @@ the upstream SHA differs.
 - **Update now** (shown only when an update is available) runs
   `ytmusic-plus update-apply`: `omarchy plugin update local.ytmusic-plus`,
   then `omarchy-shell shell rescanPlugins` so the new UI hot-loads.
+  Every apply snapshots the previous version first.
+- After a verified manual update the shell restarts itself (mandatory —
+  the new UI only takes effect on reload).
+- **Revert last update** (same group) resets to the pre-update snapshot,
+  then reloads the shell. No snapshot → it tells you so.
 - The `origin` remote must be
   `github.com/Pro-Termux-arch/omarchy-ytmusic-plus` (https or ssh); anything
   else is refused (anti-hijack, exit 2).
@@ -57,6 +117,8 @@ the upstream SHA differs.
   One line on stdout; exit 1 with `no track` when nothing is loaded.
 - `ytmusic-plus queue-clear` — stop playback and empty the queue (idempotent;
   the counterpart to `queue JSON INDEX`).
+- `ytmusic-plus update-revert` — roll back to the pre-update snapshot
+  (same call the Settings Revert button makes).
 
 ## Dependencies
 
@@ -120,6 +182,8 @@ if you added the optional shortcut.
   can never truncate your library, playlists, or settings.
 - No remote content is ever executed: lyrics, charts, and search results are
   parsed as data (JSON/TSV) and rendered as plain text.
+- Thumbnails are https-or-empty; update/rollback SHAs are validated and the
+  updater refuses foreign origins.
 
 ## Credits
 
@@ -139,6 +203,11 @@ saved tracks, offline downloads, multi-source fallbacks, lyrics and a new UI.
 | Offline music (opus) | `~/Music/ytmusic-plus/` |
 
 `ytmusic-plus cache-clear` wipes the cache only.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) — 42 releases from v1.0 to current,
+each entry describing exactly what changed.
 
 ## License
 
