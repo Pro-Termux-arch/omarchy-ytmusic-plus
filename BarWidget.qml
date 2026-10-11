@@ -45,7 +45,18 @@ BarWidget {
   property bool fullScreen: false
   property bool vizOn: true
   readonly property bool barHover: pillHover.containsMouse || bodyMouse.containsMouse || compactMouse.containsMouse || bodyMouse.pressed || compactMouse.pressed
-  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.barHover)
+  property bool leaveGrace: false // collapse debounce: stays up 120ms after leave so button-hops never minimize
+  readonly property bool pillFull: root.hasTrack && !root.idleHidden && root.barMode !== "compact" && (!root.barExpand || root.barHover || root.leaveGrace)
+  Timer {
+    id: leaveGraceTimer
+    interval: 120
+    repeat: false
+    onTriggered: { if (!root.barHover) root.leaveGrace = false }
+  }
+  onBarHoverChanged: {
+    if (root.barHover) { leaveGraceTimer.stop(); root.leaveGrace = false }
+    else { root.leaveGrace = true; leaveGraceTimer.restart() }
+  }
 
   implicitWidth: root.pillFull ? Math.min(Style.space(320), pillRow.childrenRect.width + Style.space(5)) : (typeof barSize !== "undefined" ? barSize : Style.space(30))
   implicitHeight: barSize

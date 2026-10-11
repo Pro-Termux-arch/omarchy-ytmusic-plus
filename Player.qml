@@ -35,7 +35,7 @@ Item {
   }
   readonly property color onAccent: (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.6 ? "#101010" : "#ffffff"
   // Release stamp, bottom-left. Bump together with manifest.json + CHANGELOG.md.
-  readonly property string appVersion: "v2.3.9 stable"
+  readonly property string appVersion: "v2.4.1 stable"
 
   property bool opened: false
   property bool searching: false
@@ -139,6 +139,7 @@ Item {
   property var closeCallback: null
   property string scriptPath: Qt.resolvedUrl("bin/ytmusic-plus").toString().replace("file://", "")
   property string openPlaylistName: ""
+  property string deleteArmed: ""
   property string addTargetPlaylist: ""
   // Lyrics state
   property string lyricsLoadedFor: ""
@@ -558,6 +559,23 @@ Item {
     runCmd(["pl-create", name])
     newPlaylistField.text = ""
     Qt.callLater(root.refreshMeta)
+    notice = "Created " + name
+    noticeTimer.restart()
+  }
+  function removePlaylistTrack(i) {
+    if (!openPlaylistName || i < 0 || i >= tracks.count) return
+    runCmd(["pl-remove", openPlaylistName, tracks.get(i).videoId])
+    Qt.callLater(function() { if (openPlaylistName) root.openPlaylist(openPlaylistName) })
+  }
+  function deletePlaylist(name) {
+    if (!name) return
+    runCmd(["pl-delete", name])
+    deleteArmed = ""
+    openPlaylistName = ""
+    tracks.clear()
+    Qt.callLater(root.refreshMeta)
+    notice = "Deleted " + name
+    noticeTimer.restart()
   }
 
   function loadLibrary() {
@@ -3522,43 +3540,18 @@ Item {
           }
         }
 
-        // Playlist management row (tab 2)
+        // Playlist management: buttons row + full-width name bar below (34+5+34).
         Item {
           width: parent.width
-          height: root.tabIndex === 3 ? Style.space(34) : 0
+          height: root.tabIndex === 3 ? Style.space(73) : 0
           visible: root.tabIndex === 3
-          Row {
+          Column {
             anchors.fill: parent
             spacing: Style.space(5)
-            Rectangle {
-              width: parent.width - Style.space(233)
-              height: parent.height
-              radius: height / 2
-              color: root.raised
-              TextInput {
-                id: newPlaylistField
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(13)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(13)
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.ink
-                selectionColor: root.accent
-                selectedTextColor: root.onAccent
-                font.family: root.uiFont
-                font.pixelSize: Style.font.caption
-                clip: true
-                Text {
-                  text: "New list name…"
-                  color: root.muted
-                  font: newPlaylistField.font
-                  visible: !newPlaylistField.text
-                }
-                Keys.onPressed: function(event) {
-                  if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.createPlaylist(); event.accepted = true }
-                }
-              }
-            }
+            Row {
+              width: parent.width
+              height: Style.space(34)
+              spacing: Style.space(5)
             Rectangle {
               width: Style.space(89)
               height: parent.height
@@ -3600,6 +3593,70 @@ Item {
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
               Text { anchors.centerIn: parent; text: "Mixtape"; color: mixtapeHover.containsMouse ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption; Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } } }
               MouseArea { id: mixtapeHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.buildMixtape() }
+            }
+            Rectangle {
+              width: Style.space(55)
+              height: parent.height
+              radius: height / 2
+              color: (delHover.containsMouse || root.deleteArmed === root.openPlaylistName) ? root.accent : "transparent"
+              border.width: 1
+              border.color: root.accent
+              opacity: root.openPlaylistName ? 1 : 0.4
+              enabled: root.openPlaylistName !== ""
+              transformOrigin: Item.Center
+              scale: delHover.pressed ? 0.95 : 1.0
+              Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+              Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+              Text { anchors.centerIn: parent; text: (root.deleteArmed === root.openPlaylistName && root.openPlaylistName !== "") ? "Sure?" : "Delete"; color: (delHover.containsMouse || root.deleteArmed === root.openPlaylistName) ? root.onAccent : root.accent; font.family: root.uiFont; font.pixelSize: Style.font.caption; Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } } }
+              MouseArea {
+                id: delHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  var nm = String(root.openPlaylistName || "")
+                  if (!nm) return
+                  if (root.deleteArmed === nm) root.deletePlaylist(nm)
+                  else { root.deleteArmed = nm; root.notice = "Tap Delete again to remove " + nm; noticeTimer.restart(); delArmTimer.restart() }
+                }
+              }
+              Timer {
+                id: delArmTimer
+                interval: 3000
+                repeat: false
+                onTriggered: { root.deleteArmed = "" }
+              }
+            }
+          }
+            Rectangle {
+              width: parent.width
+              height: Style.space(34)
+              radius: height / 2
+              color: root.raised
+              TextInput {
+                id: newPlaylistField
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(13)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(13)
+                anchors.verticalCenter: parent.verticalCenter
+                color: root.ink
+                selectionColor: root.accent
+                selectedTextColor: root.onAccent
+                font.family: root.uiFont
+                font.pixelSize: Style.font.caption
+                clip: true
+                Text {
+                  text: "New list name…"
+                  color: root.muted
+                  font: newPlaylistField.font
+                  visible: !newPlaylistField.text
+                }
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.createPlaylist(); event.accepted = true }
+                }
+              }
             }
           }
         }
@@ -6077,7 +6134,7 @@ Item {
       }
 
       Column {
-        width: parent.width - Style.space(34) - (root.listMode === "queue" ? Style.space(144) : Style.space(110)) - Style.space(26) - Style.space(34) - parent.spacing * 4
+        width: parent.width - Style.space(34) - (root.listMode === "queue" ? Style.space(144) : (root.listMode === "playlists" ? Style.space(132) : Style.space(110))) - Style.space(26) - Style.space(34) - parent.spacing * 4
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
         Text { width: parent.width; text: trackRow.title; textFormat: Text.PlainText; color: trackRow.isCurrent ? root.accent : root.ink; font.family: root.uiFont; font.pixelSize: Style.font.bodySmall; font.bold: trackRow.isCurrent; elide: Text.ElideRight; Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } } }
@@ -6086,7 +6143,7 @@ Item {
 
       // hover actions: mix · save · +list · download · next · reorder
       Item {
-        width: root.listMode === "queue" ? Style.space(144) : Style.space(110)
+        width: root.listMode === "queue" ? Style.space(144) : (root.listMode === "playlists" ? Style.space(132) : Style.space(110))
         height: parent.height
         opacity: rowHovered ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -6154,6 +6211,20 @@ Item {
             Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
             MouseArea { id: dnArea; anchors.fill: parent; anchors.margins: -Style.space(3); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.moveTrack(trackRow.index, 1) }
             InfoTip { watched: dnArea; tipText: "Move down"; delayMs: 1000 }
+          }
+          Text {
+            visible: root.listMode === "playlists"
+            text: "x"
+            color: rmArea.containsMouse ? root.accent : root.muted
+            font.family: root.uiFont
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            scale: rmArea.containsMouse ? 1.12 : 1.0
+            transformOrigin: Item.Center
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            MouseArea { id: rmArea; anchors.fill: parent; anchors.margins: -Style.space(3); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.removePlaylistTrack(trackRow.index) }
+            InfoTip { watched: rmArea; tipText: "Remove from playlist"; delayMs: 1000 }
           }
         }
       }

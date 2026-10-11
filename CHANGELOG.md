@@ -1,13 +1,35 @@
 # YTMusic Plus — Changelog
 
-Updates so far: **38** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable → v2.3.7 beta → v2.3.8 beta → v2.3.9 stable)
+Updates so far: **41** (v1.0 stable → v1.1 beta → v1.2 beta → v1.4 stable → v1.5 beta → v1.6 stable → v1.7 stable → v1.8 beta → v1.9 beta → v2 stable → v2.1 stable → v2.1.1 stable → v2.1.2 stable → v2.1.3 stable → v2.1.4 stable → v2.1.5 stable → v2.1.6 stable → v2.1.7 stable → v2.1.8 stable → v2.1.9 stable → v2.2 stable → v2.2.1 stable → v2.2.2 stable → v2.2.3 stable → v2.2.4 beta → v2.2.5 beta → v2.2.6 beta → v2.2.7 beta → v2.2.9 beta → v2.3 beta → v2.3.1 stable → v2.3.2 stable → v2.3.3 stable → v2.3.4 stable → v2.3.5 stable → v2.3.6 stable → v2.3.7 beta → v2.3.8 beta → v2.3.9 stable → v2.4 beta → v2.4.1 beta → v2.4.1 stable)
 
 When cutting a release, bump all three together:
 `manifest.json` → `Player.qml` (`appVersion`) → this file.
 Stable releases also get a tag: `vX.Y.Z-stable` (the stable update channel
 tracks these tags; tag the release commit right after pushing).
 
-## v2.3.9 stable (current)
+## v2.4.1 stable (current)
+
+> Promotes the v2.4.1 beta: two-row playlist management, delete +
+> per-track remove, spaced names, transport leave-grace, and the
+> backend hardening batch (locks, caps, timeouts, self-heal).
+
+## v2.4.1 beta
+
+> Playlist management goes two-row (buttons + full-width name bar);
+> hardening batch: toggle under lock, queue 500/2MB caps, bounded
+> yt-dlp, shared dl.lock + update.lock, settings self-heal, graceful
+> list reads, atomic pl-create, tunes pruning, font timeouts,
+> https-only thumbs.
+
+## v2.4 beta
+
+> Delete playlists (two-tap Delete pill on the Playlist tab, existing
+> pl-delete verb, 3s arm window); transport hover keeps the pill up with
+> a 120ms collapse debounce while expand stays instant; playlist names
+> allow spaces; per-track remove-x in playlist mode; exact-fit
+> management row math.
+
+## v2.3.9 stable
 
 > Promotes the v2.3.7 + v2.3.8 betas: instant-follow hover; pill
 > crossfade + pop; fullscreen fade-through + bordered transport card

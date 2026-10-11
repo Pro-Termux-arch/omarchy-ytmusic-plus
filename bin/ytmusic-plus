@@ -64,12 +64,30 @@ fi
 commit() {
   if [[ -s "${1:-}" && -n "${2:-}" ]]; then mv -- "$1" "$2"; else rm -f -- "${1:-}"; return 1; fi
 }
+# Bounded yt-dlp: --socket-timeout covers one socket, not a slow drip that
+# wedges lock-holding callers. Wrap every unbounded resolve/search in timeout.
+run_ytdlp() {
+  local budget="${1:-60}"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -s TERM "$budget" "$@"
+  else
+    "$@"
+  fi
+}
+
 
 # Settings with sane defaults. The additive merge below runs on EVERY invocation
 # (including 450ms status polls), so it must NEVER rewrite the file when all
 # keys are present — an unconditional rewrite raced with `set` and silently
 # reverted the user's change within a second (the "settings don't stick" bug).
 SETTINGS_DEFAULTS='{"volume":70,"silence":"off","normalize":"off","lyricsOffset":0,"mixAuto":"on","searchLimit":12,"dlQuality":"best","loop":"off","eqPreset":"flat","eqGains":[0,0,0,0,0,0,0,0,0,0],"customFont":"","update_last_check":0,"update_channel":"beta","barmode":"full","seekstyle":"default","btnstyle":"classic","buffer":"balanced","viz":"on","fullscreen":"off","barexpand":"on","dockpos":"top"}'
+# Self-heal a torn settings file (disk-full/hand-edit): keep a backup,
+# restore defaults. Read path (sget) already falls back to defaults.
+if [[ -e "$SETTINGS_FILE" ]] && ! jq -e 'type == "object"' "$SETTINGS_FILE" >/dev/null 2>&1; then
+  cp -- "$SETTINGS_FILE" "$DATA_DIR/settings.json.corrupt.$(date +%s 2>/dev/null || printf 0)" 2>/dev/null || true
+  printf '%s\n' "$SETTINGS_DEFAULTS" >"$SETTINGS_FILE" 2>/dev/null || true
+fi
 if [[ -e "$SETTINGS_FILE" ]]; then
   if ! jq -e --argjson d "$SETTINGS_DEFAULTS" '($d | keys_unsorted) - (keys_unsorted) | length == 0' "$SETTINGS_FILE" >/dev/null 2>&1; then
     tmp_s="$RUNTIME_DIR/settings.merge.tmp"
@@ -147,7 +165,7 @@ sha1() { printf '%s' "$1" | sha1sum | cut -d' ' -f1; }
 
 valid_id() { [[ "${1:-}" =~ ^[A-Za-z0-9_-]{11}$ ]]; }
 
-pl_name_ok() { [[ "${1:-}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; }
+pl_name_ok() { [[ "${1:-}" =~ ^[A-Za-z0-9.\ _-]{1,64}$ ]]; }
 
 dl_path_for() { printf '%s/%s.opus' "$MUSIC_DIR" "$1"; }
 
@@ -244,7 +262,7 @@ resolve_playable() {
   require yt-dlp
   local -a base; mapfile -t base < <(ytdlp_base)
   for client in android web; do
-    url="$(yt-dlp "${base[@]}" --no-playlist --skip-download --format 'bestaudio/best' \
+    url="$(run_ytdlp 60 yt-dlp "${base[@]}" --no-playlist --skip-download --format 'bestaudio/best' \
       --extractor-args "youtube:player_client=$client" \
       --print '%(url)s' "https://www.youtube.com/watch?v=$vid" 2>/dev/null | head -n1 || true)"
     if [[ "$url" == https://* && "$url" != "NA" ]]; then
@@ -760,7 +778,7 @@ ver_local_ge_remote() {
 
 # Serialize playback mutations under one exclusive lock; status takes shared.
 case "${1:-}" in
-  queue|queue-clear|requeue|play|next|previous|stop|lib-save|lib-unsave|pl-create|pl-add|pl-remove|pl-delete|pl-play|dl-remove|set|loop|shuffle|queue-insert|queue-move|queue-reverse|sleep|offset-nudge|offset-reset|font-install|font-reset)
+  queue|queue-clear|requeue|toggle|play|next|previous|stop|lib-save|lib-unsave|pl-create|pl-add|pl-remove|pl-delete|pl-play|dl-remove|set|loop|shuffle|queue-insert|queue-move|queue-reverse|sleep|offset-nudge|offset-reset|font-install|font-reset)
     require flock
     exec 9>"$RUNTIME_DIR/launch.lock"
     flock 9
@@ -796,14 +814,14 @@ case "${1:-}" in
     base=()
     mapfile -t base < <(ytdlp_base)
     prune_cache
-    if out="$(yt-dlp "${base[@]}" --skip-download --flat-playlist --playlist-end 40 \
+    if out="$(run_ytdlp 60 yt-dlp "${base[@]}" --skip-download --flat-playlist --playlist-end 40 \
         --print $'%(id)s\t%(title)s\t%(channel)s\t%(duration_string)s\t%(thumbnail)s\t%(live_status)s' \
         "https://www.youtube.com/watch?v=${vid}&list=RDAMVM${vid}" 2>/dev/null)" && [[ -n "$out" ]]; then
       atomic_cache_put "$key" "$out" || exit 1
       cat -- "$key"; exit 0
     fi
     # fallback: classic RD mix (artist-locked but better than nothing)
-    if out="$(yt-dlp "${base[@]}" --skip-download --flat-playlist --playlist-end 40 \
+    if out="$(run_ytdlp 60 yt-dlp "${base[@]}" --skip-download --flat-playlist --playlist-end 40 \
         --print $'%(id)s\t%(title)s\t%(channel)s\t%(duration_string)s\t%(thumbnail)s\t%(live_status)s' \
         "https://www.youtube.com/watch?v=${vid}&list=RD${vid}" 2>/dev/null)" && [[ -n "$out" ]]; then
       atomic_cache_put "$key" "$out" || exit 1
@@ -841,6 +859,9 @@ case "${1:-}" in
     queue_tmp="$RUNTIME_DIR/queue.json.tmp"
     jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp" 2>/dev/null || { rm -f -- "$queue_tmp"; exit 1; }
     [[ -s "$queue_tmp" ]] || { rm -f -- "$queue_tmp"; exit 1; }
+    qcap_len="$(jq 'length' "$queue_tmp" 2>/dev/null || printf 0)"
+    qcap_bytes="$(stat -c%s -- "$queue_tmp" 2>/dev/null || printf 0)"
+    if ! [[ "$qcap_len" =~ ^[0-9]+$ ]] || ! [[ "$qcap_bytes" =~ ^[0-9]+$ ]] || (( qcap_len > 500 )) || (( qcap_bytes > 2097152 )); then rm -f -- "$queue_tmp"; printf 'queue too large (max 500 tracks / 2MB)\n' >&2; exit 1; fi
     mv -- "$queue_tmp" "$QUEUE_FILE"
     # Validate/clamp the incoming display index against the actual array: the UI
     # builds JSON from the displayed list, but a stale/desynced index must never
@@ -863,6 +884,9 @@ case "${1:-}" in
     queue_tmp="$RUNTIME_DIR/queue.json.tmp"
     jq -ce 'if type == "array" then . else error("queue must be an array") end' <<<"$queue_json" >"$queue_tmp" 2>/dev/null || { rm -f -- "$queue_tmp"; exit 1; }
     [[ -s "$queue_tmp" ]] || { rm -f -- "$queue_tmp"; exit 1; }
+    qcap_len="$(jq 'length' "$queue_tmp" 2>/dev/null || printf 0)"
+    qcap_bytes="$(stat -c%s -- "$queue_tmp" 2>/dev/null || printf 0)"
+    if ! [[ "$qcap_len" =~ ^[0-9]+$ ]] || ! [[ "$qcap_bytes" =~ ^[0-9]+$ ]] || (( qcap_len > 500 )) || (( qcap_bytes > 2097152 )); then rm -f -- "$queue_tmp"; printf 'queue too large (max 500 tracks / 2MB)\n' >&2; exit 1; fi
     mv -- "$queue_tmp" "$QUEUE_FILE"
     # Clamp mix seed index to the actual array (same stale-index guard as queue).
     qlen_rq="$(jq 'length' "$QUEUE_FILE" 2>/dev/null || printf 0)"
@@ -1091,6 +1115,7 @@ case "${1:-}" in
     # Streams only: a library url must be empty or http(s), otherwise the entry
     # could never play (launch_stream rejects it) and would stall the queue.
     if [[ -n "$url" && "$url" != http://* && "$url" != https://* ]]; then printf 'bad stream url\n' >&2; exit 2; fi
+    if [[ -n "$thumb" && "$thumb" != https://* ]]; then thumb=""; fi
     tmp="$DATA_DIR/library.json.tmp"
     jq -c --arg v "$vid" --arg t "$title" --arg a "$artist" --arg th "$thumb" --arg d "$dur" --argjson l "$live" --arg u "$url" \
       'map(select(.videoId != $v)) + [{videoId:$v,title:$t,artist:$a,thumbnail:$th,duration:$d,isLive:$l,url:$u}]' \
@@ -1108,7 +1133,7 @@ case "${1:-}" in
     ;;
   lib-list)
     require jq
-    jq -r '.[] | [.videoId, (.title//"Untitled"), (.artist//"YouTube"), (.duration//""), (.thumbnail//""), (if (.isLive//false) then "is_live" else "not_live" end), (.url//"")] | @tsv' "$LIB_FILE"
+    jq -r '.[] | [.videoId, (.title//"Untitled"), (.artist//"YouTube"), (.duration//""), (.thumbnail//""), (if (.isLive//false) then "is_live" else "not_live" end), (.url//"")] | @tsv' "$LIB_FILE" 2>/dev/null || true
     ;;
   lib-check)
     require jq
@@ -1118,9 +1143,11 @@ case "${1:-}" in
   # ---- playlists: local CRUD ----------------------------------------------
   pl-create)
     require jq
-    name="${2:-}"; pl_name_ok "$name" || { printf 'bad playlist name (a-z 0-9 . _ -)\n' >&2; exit 2; }
+    name="${2:-}"; pl_name_ok "$name" || { printf 'bad playlist name (letters digits . _ - space)\n' >&2; exit 2; }
     [[ -e "$PL_DIR/$name.json" ]] && { printf 'playlist exists: %s\n' "$name" >&2; exit 1; }
-    printf '[]\n' >"$PL_DIR/$name.json"
+    tmp="$PL_DIR/$name.json.tmp"
+    printf '[]\n' >"$tmp" || exit 1
+    commit "$tmp" "$PL_DIR/$name.json" || exit 1
     printf 'created %s\n' "$name"
     ;;
   pl-list)
@@ -1135,7 +1162,7 @@ case "${1:-}" in
     require jq
     name="${2:-}"; pl_name_ok "$name" || exit 2
     [[ -f "$PL_DIR/$name.json" ]] || exit 1
-    jq -r '.[] | [.videoId, (.title//"Untitled"), (.artist//"YouTube"), (.duration//""), (.thumbnail//""), (if (.isLive//false) then "is_live" else "not_live" end), (.url//"")] | @tsv' "$PL_DIR/$name.json"
+    jq -r '.[] | [.videoId, (.title//"Untitled"), (.artist//"YouTube"), (.duration//""), (.thumbnail//""), (if (.isLive//false) then "is_live" else "not_live" end), (.url//"")] | @tsv' "$PL_DIR/$name.json" 2>/dev/null || true
     ;;
   pl-add)
     require jq
@@ -1145,6 +1172,7 @@ case "${1:-}" in
     [[ -f "$PL_DIR/$name.json" ]] || { printf 'no such playlist: %s\n' "$name" >&2; exit 1; }
     title="${4:-Untitled}"; artist="${5:-YouTube}"; thumb="${6:-}"; dur="${7:-}"; live="${8:-false}"; url="${9:-}"
     if [[ -n "$url" && "$url" != http://* && "$url" != https://* ]]; then printf 'bad stream url\n' >&2; exit 2; fi
+    if [[ -n "$thumb" && "$thumb" != https://* ]]; then thumb=""; fi
     # Streams (radio/previews) keep their own art or none; only bare YouTube
     # ids get the ytimg fallback thumbnail.
     if [[ -z "${thumb:-}" || "$thumb" == "NA" ]]; then
@@ -1237,7 +1265,7 @@ case "${1:-}" in
     ;;
   dl-list)
     require jq
-    jq -r 'to_entries[] | [.key, (.value.title // "Untitled"), (.value.artist // "YouTube"), (.value.duration // ""), (.value.thumbnail // ""), (if (.value.isLive // false) then "is_live" else "not_live" end)] | @tsv' "$DL_META" 2>/dev/null
+    jq -r 'to_entries[] | [.key, (.value.title // "Untitled"), (.value.artist // "YouTube"), (.value.duration // ""), (.value.thumbnail // ""), (if (.value.isLive // false) then "is_live" else "not_live" end)] | @tsv' "$DL_META" 2>/dev/null || true
     ;;
   dl-check)
     vid="${2:-}"; valid_id "$vid" || exit 2
@@ -1246,6 +1274,9 @@ case "${1:-}" in
   dl-remove)
     require jq
     vid="${2:-}"; valid_id "$vid" || exit 2
+    require flock
+    exec 10>"$RUNTIME_DIR/dl.lock"
+    flock 10
     rm -f -- "$(dl_path_for "$vid")"
     tmp="$DL_META.tmp"
     jq -c --arg v "$vid" 'del(.[$v])' "$DL_META" >"$tmp" || exit 1
@@ -1274,8 +1305,13 @@ case "${1:-}" in
     (( ${#base} >= 1 && ${#base} <= 128 )) || { printf 'bad font filename\n' >&2; exit 2; }
     [[ "$base" != *"/"* ]] || { printf 'bad font filename\n' >&2; exit 2; }
     cp -- "$src" "$dest_dir/$base"
-    fc-cache -f "$dest_dir" >/dev/null 2>&1
-    family="$(fc-scan --format '%{family[0]}\n' "$dest_dir/$base" 2>/dev/null | head -n1 | tr -d '\n\r')"
+    if command -v timeout >/dev/null 2>&1; then
+      timeout -s TERM 15 fc-cache -f "$dest_dir" >/dev/null 2>&1
+      family="$(timeout -s TERM 15 fc-scan --format '%{family[0]}\n' "$dest_dir/$base" 2>/dev/null | head -n1 | tr -d '\n\r')"
+    else
+      fc-cache -f "$dest_dir" >/dev/null 2>&1
+      family="$(fc-scan --format '%{family[0]}\n' "$dest_dir/$base" 2>/dev/null | head -n1 | tr -d '\n\r')"
+    fi
     if [[ -z "$family" ]]; then
       rm -f -- "$dest_dir/$base"
       printf 'could not read font family\n' >&2
@@ -1303,7 +1339,7 @@ case "${1:-}" in
       printf '[{"label":"Omarchy system","family":""}]\n'
       exit 0
     fi
-    _fp_raw="$(fc-list : family 2>/dev/null || true)"
+    if command -v timeout >/dev/null 2>&1; then _fp_raw="$(timeout -s TERM 15 fc-list : family 2>/dev/null || true)"; else _fp_raw="$(fc-list : family 2>/dev/null || true)"; fi
     _fp_all=""
     if [[ -n "${_fp_raw:-}" ]]; then
       _fp_all="$(printf '%s\n' "$_fp_raw" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' 2>/dev/null || true)"
@@ -1746,6 +1782,7 @@ case "${1:-}" in
     require curl; require jq
     query="${2:-}"
     [[ -n "$query" ]] || exit 0
+    prune_cache
     key="$CACHE_DIR/home-tunes-$(sha1 "$query")"
     now="$(date +%s)"
     if [[ -s "$key" ]]; then
@@ -2459,6 +2496,9 @@ case "${1:-}" in
     fi
     [[ "$local_full" =~ ^[0-9a-f]{40}$ ]] || local_full=""
     [[ -n "$local_full" ]] && local_short="${local_full:0:7}" || local_short="unknown"
+    require flock
+    exec 11>"$RUNTIME_DIR/update.lock"
+    flock 11 || exit 1
     if [[ "$upd_channel" == beta ]]; then
       # Beta channel: origin HEAD (identical to historic behavior).
       remote_line=""
@@ -2645,6 +2685,9 @@ case "${1:-}" in
       # manager, which is the trusted path for such installs; stable needs
       # git and fails below with a clear error.
     fi
+    require flock
+    exec 11>"$RUNTIME_DIR/update.lock"
+    flock 11 || exit 1
     if [[ "$upd_channel" == beta ]]; then
       if [[ -d "$plugindir/.git" ]]; then
         update_stash_if_dirty "$plugindir" beta
@@ -2720,6 +2763,9 @@ case "${1:-}" in
     fi
     command -v git >/dev/null 2>&1 || { printf 'update-apply: git not found\n' >&2; exit 1; }
     if command -v timeout >/dev/null 2>&1; then
+    require flock
+    exec 11>"$RUNTIME_DIR/update.lock"
+    flock 11 || exit 1
       fetch_cmd=(timeout -s TERM 60 git -C "$plugindir" fetch --tags origin)
     else
       fetch_cmd=(git -C "$plugindir" fetch --tags origin)
@@ -2777,6 +2823,9 @@ case "${1:-}" in
     printf 'UPDATE_APPLIED %s\n' "${target_sha:0:7}"
     ;;
   update-revert)
+    require flock
+    exec 11>"$RUNTIME_DIR/update.lock"
+    flock 11 || exit 1
     # update-revert: roll back to the pre-update snapshot saved by
     # update-apply (DATA_DIR/update_prev.json). Refuses dirty trees (commit
     # or stash first), fetches the snapshot SHA when the object is missing

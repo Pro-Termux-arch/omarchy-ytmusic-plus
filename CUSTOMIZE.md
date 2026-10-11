@@ -165,6 +165,18 @@ manifest.json  hypr-bindings.lua  README.md  LICENSE  CHANGELOG.md  Version.txt
   (margins 34); fullscreen bordered transport card 102h (13+13+8+55+13,
   muted border, radius 13) with fullscreen-only volume slider
   (sliderSeek mirrors nudgeVolume write path).
+  v2.4 beta: playlist Delete pill (two-tap arm 3s, existing pl-delete verb,
+  clears open view + refreshMeta); leave-grace collapse debounce (expand
+  instant, 120ms grace); pl_name_ok allows spaces (escaped space in
+  [[ =~ ]], traversal still rejected); per-track x in playlists mode
+  (hover reserve 110->132, 6x22); mgmt two-row (buttons 34 + gap 5 +
+  full-width name 34 = 73h).
+  v2.4.1 beta hardening: toggle under launch.lock; queue/requeue capped
+  500 tracks / 2MB; run_ytdlp() bounds resolve+mix at 60s; dl-remove
+  shares dl.lock; update.lock around check-fetch/apply/revert; settings
+  self-heal with timestamped backup; lib/dl/pl reads fall back empty;
+  pl-create via tmp+commit; tunes prunes; font tools under timeout 15;
+  thumbs sanitized to https-or-empty.
 
 ## 4. HOWTO: add a seekbar style (key `mystyle`)
 
